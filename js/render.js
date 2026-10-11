@@ -9,14 +9,21 @@
     asia: '#5b7fc7', london: '#3f9a6e', ny: '#d08a3a', pd: '#9aa0aa',
   };
   const SESSION_COL = { asia: COL.asia, london: COL.london, ny: COL.ny };
+  const hexRgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
+  const RGB = { asia: hexRgb(COL.asia), london: hexRgb(COL.london), ny: hexRgb(COL.ny), pd: '128,134,146', bull: '80,160,125', bear: '200,96,126' };
 
   function xLabelIdx(n) { return [Math.round(n * 0.08), Math.round(n * 0.5), Math.round(n * 0.92) - 1].map(i => Math.max(0, Math.min(n - 1, i))); }
 
+  // 크기가 그대로면 캔버스 버퍼를 다시 만들지 않고 지우기만 함 (모바일 스크롤 중 재할당 → 합성 잔상 방지)
   function setupCanvas(cv, cssW, cssH) {
     const dpr = Math.min(3, self.devicePixelRatio || 1);
-    cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
-    cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px';
-    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return ctx;
+    const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    if (cv.style.width !== cssW + 'px') cv.style.width = cssW + 'px';
+    if (cv.style.height !== cssH + 'px') cv.style.height = cssH + 'px';
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, w, h);
+    ctx.setTransform(w / cssW, 0, 0, h / cssH, 0, 0); return ctx;
   }
 
   function idxOfTime(times, t, tfMs) {
@@ -34,26 +41,54 @@
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = COL.text; ctx.font = `${fs + 1}px ${FONT}`; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
     ctx.fillText('가격·ICT', 4, 2);
-    const L = opt.narrow ? 50 : 58, R = opt.narrow ? 70 : 92, T = 26, B = 24;
-    const pw = W - L - R, ph = H - T - B;
-    const step = pw / n;
-    const X = (i) => L + (i + 0.5) * step;
+    const narrow = !!opt.narrow;
+    const show = Object.assign({ sess: true, pd: true, ob: true, fvg: true }, opt.show || {});
+    const T = 26, B = 24, L = narrow ? 50 : 58;
+    const lastC = C[n - 1].c, ref = Math.abs(lastC);
 
     // y 범위: 캔들 + 가까운 레벨(범위의 35% 이내)
     let lo = Math.min(...C.map(c => c.l)), hi = Math.max(...C.map(c => c.h));
     const rng = hi - lo || hi * 0.01;
     const levels = [];
-    if (D.pd) { levels.push({ v: D.pd.pdh, label: 'PDH', col: COL.pd, dash: [4, 3], start: -1 }); levels.push({ v: D.pd.pdl, label: 'PDL', col: COL.pd, dash: [4, 3], start: -1 }); }
-    for (const k of ['asia', 'london', 'ny']) {
+    if (show.pd && D.pd) {
+      levels.push({ v: D.pd.pdh, name: 'PDH', key: 'pd' });
+      levels.push({ v: D.pd.pdl, name: 'PDL', key: 'pd' });
+    }
+    const sessList = [];
+    if (show.sess) for (const k of ['asia', 'london', 'ny']) {
       const s = D.sessions && D.sessions[k]; if (!s) continue;
-      const si = idxOfTime(D.times, s.start, D.tfMs);
-      levels.push({ v: s.h, label: s.name + ' H', col: SESSION_COL[k], dash: [1.5, 2.5], start: si });
-      levels.push({ v: s.l, label: s.name + ' L', col: SESSION_COL[k], dash: [1.5, 2.5], start: si });
+      const nm = (narrow && k === 'london' ? 'LDN' : s.name) + (s.live ? (narrow ? '(진행)' : ' (진행중)') : '');
+      sessList.push({ k, s });
+      levels.push({ v: s.h, name: nm + ' H', key: k, sess: s });
+      levels.push({ v: s.l, name: nm + ' L', key: k, sess: s });
     }
     for (const lv of levels) if (lv.v > hi && lv.v - hi < rng * 0.35) hi = lv.v; else if (lv.v < lo && lo - lv.v < rng * 0.35) lo = lv.v;
     const pad = (hi - lo) * 0.04; lo -= pad; hi += pad;
-    const Y = (v) => T + (hi - v) / (hi - lo) * ph;
     const inR = (v) => v >= lo && v <= hi;
+
+    // OB: 살아있는 OB 중 현재가 위 2개 / 아래 2개(가까운 순) + 현재가를 품은 OB 1개(중심이 가장 가까운 것)
+    const NOB = 2;
+    const live = (D.ob || []).filter(z => z.end == null);
+    const mid = (z) => Math.abs((z.top + z.bottom) / 2 - lastC);
+    const obs = !show.ob ? [] : [
+      ...live.filter(z => z.bottom <= lastC && z.top >= lastC).sort((a, b) => mid(a) - mid(b)).slice(0, 1),
+      ...live.filter(z => z.bottom > lastC).sort((a, b) => a.bottom - b.bottom).slice(0, NOB),
+      ...live.filter(z => z.top < lastC).sort((a, b) => b.top - a.top).slice(0, NOB),
+    ].filter(z => inR(z.top) || inR(z.bottom) || (z.top > hi && z.bottom < lo));
+
+    // 오른쪽 라벨 텍스트 → 폭 측정 → 오른쪽 여백(R) 결정
+    const fmtLv = (v) => { const d = ref >= 10000 ? 0 : ref >= 100 ? 1 : ref >= 1 ? 3 : 5; return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); };
+    const lfs = narrow ? fs - 1.5 : fs - 1;
+    ctx.font = `${lfs}px ${FONT}`;
+    const labels = [];
+    for (const lv of levels) if (inR(lv.v)) labels.push({ v: lv.v, text: `${lv.name} ${fmtLv(lv.v)}`, key: lv.key });
+    for (const z of obs) labels.push({ v: (z.top + z.bottom) / 2, text: 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
+    const maxW = Math.max(0, ...labels.map(lb => ctx.measureText(lb.text).width));
+    const R = Math.round(Math.max(narrow ? 40 : 56, Math.min(W * (narrow ? 0.36 : 0.26), maxW + 18)));
+    const pw = W - L - R, ph = H - T - B;
+    const step = pw / n;
+    const X = (i) => L + (i + 0.5) * step;
+    const Y = (v) => T + (hi - v) / (hi - lo) * ph;
 
     // 그리드 + y축
     ctx.font = `${fs - 1}px ${FONT}`; ctx.textBaseline = 'middle';
@@ -61,40 +96,55 @@
       const v = hi - (hi - lo) * g / 4, y = Y(v);
       ctx.strokeStyle = COL.grid; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke();
       ctx.fillStyle = COL.axis; ctx.textAlign = 'right';
-      const ref = Math.abs(hi);
       ctx.fillText(ref >= 10000 ? (v / 1000).toFixed(1) + 'k' : FC.fmtPrice(v, ref), L - 6, y);
     }
     ctx.save(); ctx.beginPath(); ctx.rect(L, T, pw, ph); ctx.clip();
 
-    const rightLabels = [];
-    // FVG (점선 박스)
-    // 미충족 FVG 최근 4개 + 화면 안에서 메워진 FVG 최근 3개
-    const fvgs = [...D.fvg.filter(z => z.end == null).slice(-4), ...D.fvg.filter(z => z.end != null && z.end >= 0 && z.i0 >= 0).slice(-3)];
-    for (const z of fvgs) {
-      const xa = Math.max(L, X(z.i0) - step / 2), xb = z.end == null ? L + pw : X(z.end) + step / 2;
-      const ya = Y(z.top), yb = Y(z.bottom);
-      const c = z.dir === 'bull' ? '80,160,125' : '200,96,126';
-      ctx.fillStyle = `rgba(${c},0.07)`; ctx.fillRect(xa, ya, xb - xa, yb - ya);
-      ctx.setLineDash([2, 2]); ctx.strokeStyle = `rgba(${c},0.55)`; ctx.lineWidth = 1; ctx.strokeRect(xa + 0.5, ya + 0.5, xb - xa - 1, yb - ya - 1); ctx.setLineDash([]);
+    // FVG (점선 박스): 미충족 최근 N개 + 화면 안에서 메워진 최근 M개
+    if (show.fvg) {
+      const fvgs = [...D.fvg.filter(z => z.end == null).slice(narrow ? -3 : -4), ...D.fvg.filter(z => z.end != null && z.end >= 0 && z.i0 >= 0).slice(narrow ? -2 : -3)];
+      for (const z of fvgs) {
+        const xa = Math.max(L, X(z.i0) - step / 2), xb = z.end == null ? L + pw : X(z.end) + step / 2;
+        const ya = Y(z.top), yb = Y(z.bottom);
+        const c = z.dir === 'bull' ? RGB.bull : RGB.bear;
+        ctx.fillStyle = `rgba(${c},0.07)`; ctx.fillRect(xa, ya, xb - xa, yb - ya);
+        ctx.setLineDash([2, 2]); ctx.strokeStyle = `rgba(${c},0.55)`; ctx.lineWidth = 1; ctx.strokeRect(xa + 0.5, ya + 0.5, xb - xa - 1, yb - ya - 1); ctx.setLineDash([]);
+      }
     }
     // OB (실선 박스, 오른쪽 끝까지)
-    const obs = [...D.ob.filter(z => z.dir === 'bull').slice(-2), ...D.ob.filter(z => z.dir === 'bear').slice(-2)];
     for (const z of obs) {
-      if (!inR(z.top) && !inR(z.bottom) && !(z.top > hi && z.bottom < lo)) continue;
       const xa = Math.max(L, X(z.i0) - step / 2), xb = L + pw;
       const ya = Y(z.top), yb = Y(z.bottom);
-      const c = z.dir === 'bull' ? '80,160,125' : '200,96,126';
+      const c = z.dir === 'bull' ? RGB.bull : RGB.bear;
       ctx.fillStyle = `rgba(${c},0.13)`; ctx.fillRect(xa, ya, xb - xa, yb - ya);
       ctx.strokeStyle = `rgba(${c},0.75)`; ctx.lineWidth = 1; ctx.strokeRect(xa + 0.5, ya + 0.5, xb - xa - 1, yb - ya - 1);
-      rightLabels.push({ y: (ya + yb) / 2, text: 'OB', col: `rgb(${c})` });
     }
-    // 레벨 선
-    for (const lv of levels) {
-      if (!inR(lv.v)) continue;
-      const y = Math.round(Y(lv.v)) + 0.5, xa = lv.start < 0 ? L : X(lv.start) - step / 2;
-      ctx.strokeStyle = lv.col; ctx.setLineDash(lv.dash); ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(L + pw, y); ctx.stroke(); ctx.setLineDash([]);
-      rightLabels.push({ y, text: lv.label, col: lv.col });
+    // 전일 고저: 회색 파선, 화면 전체 폭
+    if (show.pd && D.pd) for (const v of [D.pd.pdh, D.pd.pdl]) {
+      if (!inR(v)) continue;
+      const y = Math.round(Y(v)) + 0.5;
+      ctx.strokeStyle = `rgba(${RGB.pd},0.95)`; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 세션: 자기 시간대 위에 연한 파선 박스 + 끝난 뒤 H/L을 오른쪽 끝까지 연장
+    for (const { k, s } of sessList) {
+      const c = RGB[k];
+      const ei = idxOfTime(D.times, s.end, D.tfMs);
+      let xb = L;
+      if (ei >= 0) {
+        const si = idxOfTime(D.times, s.start, D.tfMs);
+        const xa = si < 0 ? L : X(si) - step / 2; xb = X(ei) + step / 2;
+        const ya = Y(s.h), yb = Y(s.l);
+        ctx.fillStyle = `rgba(${c},0.08)`; ctx.fillRect(xa, ya, xb - xa, yb - ya);
+        ctx.strokeStyle = `rgba(${c},0.75)`; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+        ctx.strokeRect(Math.round(xa) + 0.5, Math.round(ya) + 0.5, Math.max(1, Math.round(xb - xa) - 1), Math.max(1, Math.round(yb - ya))); ctx.setLineDash([]);
+      }
+      if (xb < L + pw - 1) for (const v of [s.h, s.l]) {
+        if (!inR(v)) continue;
+        const y = Math.round(Y(v)) + 0.5;
+        ctx.strokeStyle = `rgba(${c},0.9)`; ctx.setLineDash([4, 3]); ctx.lineWidth = 1.25;
+        ctx.beginPath(); ctx.moveTo(xb, y); ctx.lineTo(L + pw, y); ctx.stroke(); ctx.setLineDash([]);
+      }
     }
     // EMA
     for (const k of [200, 100, 50, 20]) {
@@ -118,14 +168,21 @@
     }
     ctx.restore();
 
-    // 오른쪽 라벨 (겹침 방지)
-    rightLabels.sort((a, b) => a.y - b.y);
-    const gap = fs + 1;
-    for (let i = 1; i < rightLabels.length; i++) if (rightLabels[i].y - rightLabels[i - 1].y < gap) rightLabels[i].y = rightLabels[i - 1].y + gap;
-    ctx.font = `${fs - 1}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    for (const lb of rightLabels) {
-      ctx.strokeStyle = lb.col; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(L + pw + 2, lb.y); ctx.lineTo(L + pw + 8, lb.y); ctx.stroke();
-      ctx.fillStyle = lb.col; ctx.fillText(lb.text, L + pw + 11, lb.y);
+    // 오른쪽 라벨: 겹치면 펼치고, 실제 레벨까지 짧은 지시선(leader)을 그림
+    const gap = lfs + 3;
+    for (const lb of labels) lb.y = Y(lb.v);
+    FC.layoutLabels(labels, gap, T - 8 + gap / 2, H - gap / 2 - 2);
+    ctx.font = `${lfs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const x0l = L + pw;
+    for (const lb of labels) {
+      const col = lb.ob ? `rgb(${lb.rgbs})` : `rgb(${RGB[lb.key]})`;
+      const y = Math.round(lb.y) + 0.5, ly = Math.round(lb.ly) + 0.5;
+      ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(x0l + 1, y);
+      if (Math.abs(ly - y) < 1) ctx.lineTo(x0l + 9, y);
+      else { ctx.lineTo(x0l + 3, y); ctx.lineTo(x0l + 8, ly); ctx.lineTo(x0l + 10, ly); }
+      ctx.stroke();
+      ctx.fillStyle = col; ctx.fillText(lb.text, x0l + 12, ly);
     }
     // x축
     ctx.fillStyle = COL.axis; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = `${fs - 1}px ${FONT}`;
@@ -189,11 +246,15 @@
       ctx.strokeStyle = 'rgba(60,64,72,0.35)'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(hover), T - 2); ctx.lineTo(X(hover), T + ph + 2); ctx.stroke(); ctx.setLineDash([]);
     }
     ctx.restore();
-    // 호버 값
+    // 호버 값: 제목 오른쪽 빈 공간에 흰 바탕으로 한 번만 (제목·축 라벨과 겹치면 글자 축소)
     if (hover != null && hover >= 0 && hover < n && V[hover] != null) {
       const v = V[hover];
       const s = P.kind === 'liq' ? `롱 ${FC.fmtBig(-v.l)} / 숏 ${FC.fmtBig(v.s, true)}` : fmt(v);
-      ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillStyle = COL.text; ctx.font = `${fs}px ${FONT}`; ctx.fillText(s, L + pw, 2);
+      ctx.font = `${fs + 0.5}px ${FONT}`; const titleR = 2 + ctx.measureText(P.title).width + 8;
+      let hf = fs; ctx.font = `${hf}px ${FONT}`; let tw = ctx.measureText(s).width;
+      while (hf > 7 && L + pw - tw < titleR) { hf -= 0.5; ctx.font = `${hf}px ${FONT}`; tw = ctx.measureText(s).width; }
+      ctx.fillStyle = '#fff'; ctx.fillRect(L + pw - tw - 3, 0, tw + 4, T - 3);
+      ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillStyle = COL.text; ctx.fillText(s, L + pw, 2);
     }
     if (opt.showX !== false) {
       ctx.fillStyle = COL.axis; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = `${fs - 1.5}px ${FONT}`;
@@ -212,12 +273,13 @@
     }
     return items;
   }
-  const LEVEL_LEGEND = [{ text: '아시아 H/L', col: COL.asia }, { text: '런던 H/L', col: COL.london }, { text: '뉴욕 H/L', col: COL.ny }, { text: '전일 H/L', col: COL.pd }];
+  const LEVEL_LEGEND = [{ text: '아시아 H/L', col: COL.asia, k: 'sess' }, { text: '런던 H/L', col: COL.london, k: 'sess' }, { text: '뉴욕 H/L', col: COL.ny, k: 'sess' }, { text: '전일 H/L', col: COL.pd, k: 'pd' }];
+  const levelLegend = (show) => LEVEL_LEGEND.filter(it => !show || show[it.k] !== false);
 
   function drawLegendRow(ctx, x, y, items, dotted, fs) {
     ctx.font = `${fs}px ${FONT}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     for (const it of items) {
-      ctx.strokeStyle = it.col; ctx.lineWidth = 1.6; ctx.setLineDash(dotted ? [1.5, 2] : []);
+      ctx.strokeStyle = it.col; ctx.lineWidth = 1.6; ctx.setLineDash(dotted ? [4, 3] : []);
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 12, y); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = it.col; ctx.fillText(it.text, x + 16, y); x += 16 + ctx.measureText(it.text).width + 12;
     }
@@ -237,9 +299,9 @@
     ctx.strokeStyle = '#e6e6ea'; ctx.beginPath(); ctx.moveTo(20, 84.5); ctx.lineTo(W - 20, 84.5); ctx.stroke();
     // 메인
     const mainW = Math.round(W * 0.64), top = 96, mainH = H - top - 18;
-    const yr = drawMain(ctx, 20, top, mainW - 30, mainH, D, null, { fs: 13 });
+    const yr = drawMain(ctx, 20, top, mainW - 30, mainH, D, null, { fs: 13, show: meta.show });
     drawLegendRow(ctx, 330, 30, legendItems(D, yr), false, 12);
-    drawLegendRow(ctx, 330, 56, LEVEL_LEGEND, true, 12);
+    drawLegendRow(ctx, 330, 56, levelLegend(meta.show), true, 12);
     // 구분선
     ctx.strokeStyle = '#e6e6ea'; ctx.beginPath(); ctx.moveTo(mainW + 0.5, top); ctx.lineTo(mainW + 0.5, H - 18); ctx.stroke();
     // 미니 패널 (세로 가운데 정렬)
@@ -254,5 +316,5 @@
     return cv;
   }
 
-  self.FCRender = { drawMain, drawMini, drawCard, setupCanvas, legendItems, LEVEL_LEGEND, COL };
+  self.FCRender = { drawMain, drawMini, drawCard, setupCanvas, legendItems, LEVEL_LEGEND, levelLegend, COL };
 })();

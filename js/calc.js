@@ -84,23 +84,32 @@
     for (const s of SESSIONS) if (hm >= s.start && hm < s.end) return { s, p };
     return null;
   }
-  // 각 세션의 "가장 최근 인스턴스"(진행 중 포함)의 고가/저가와 시작 시각.
-  function sessionLevels(candles) {
+  /* 각 세션의 "가장 최근 인스턴스"의 고가/저가.
+   * - 지금 세션이 진행 중이면 그 진행 중 인스턴스(live=true, 지금까지의 고가/저가)를,
+   *   아니면 가장 최근에 끝난 인스턴스(live=false)를 돌려줍니다.
+   * - 경계는 끝 미포함 [시작, 끝): 15분봉 기준 아시아(EDT)는 KST 09:00~12:45 시작 봉 16개.
+   * 반환: {key, name, id, start(첫 봉 시각), end(마지막 봉 시각), schedStart, schedEnd(예정 종료 ms), h, l, live}
+   * nowMs를 주지 않으면 마지막 봉 시작 시각을 '지금'으로 봅니다. */
+  function sessionLevels(candles, nowMs) {
     const res = {};
-    let cur = null; // {key, id, start, h, l, end}
+    let cur = null;
     const last = {};
     for (const c of candles) {
       const so = sessionOf(c.t);
       if (!so) { cur = null; continue; }
       const id = so.s.key + ':' + so.p.year + '-' + so.p.month + '-' + so.p.day;
       if (!cur || cur.id !== id) {
-        cur = { key: so.s.key, name: so.s.name, id, start: c.t, h: c.h, l: c.l, end: c.t };
+        const hm = so.p.hour + so.p.minute / 60 + so.p.second / 3600;
+        const schedStart = Math.round(c.t - (hm - so.s.start) * 3600e3);
+        cur = { key: so.s.key, name: so.s.name, id, start: c.t, end: c.t, schedStart,
+          schedEnd: schedStart + (so.s.end - so.s.start) * 3600e3, h: c.h, l: c.l };
         last[so.s.key] = cur;
       } else {
         cur.h = Math.max(cur.h, c.h); cur.l = Math.min(cur.l, c.l); cur.end = c.t;
       }
     }
-    for (const k of Object.keys(last)) res[k] = last[k];
+    const now = nowMs ?? (candles.length ? candles[candles.length - 1].t : 0);
+    for (const k of Object.keys(last)) { last[k].live = now < last[k].schedEnd; res[k] = last[k]; }
     return res;
   }
 
@@ -192,6 +201,36 @@
     return out;
   }
 
+
+  /* ---------- 오른쪽 라벨 겹침 방지 ----------
+   * items: [{y, ...}] (y = 실제 레벨의 화면 y). 각 라벨에 ly(표시 y)를 넣어 돌려줍니다.
+   * 위→아래 순서를 유지하면서 최소 간격 gap을 보장하고 [top, bottom] 안에 머물게 합니다.
+   * 원래 y에서 가장 덜 움직이도록 겹치는 묶음은 중심을 기준으로 펼칩니다. */
+  function layoutLabels(items, gap, top, bottom) {
+    const a = items.slice().sort((p, q) => p.y - q.y);
+    // 묶음(cluster) 단위로 펼치기: 겹치는 이웃을 합쳐 평균 y 중심으로 균등 배치
+    let groups = a.map(it => ({ items: [it], c: it.y }));
+    const span = (g) => (g.items.length - 1) * gap;
+    const topOf = (g) => g.c - span(g) / 2;
+    let merged = true;
+    while (merged) {
+      merged = false;
+      for (let i = 1; i < groups.length; i++) {
+        const g0 = groups[i - 1], g1 = groups[i];
+        if (topOf(g1) - (topOf(g0) + span(g0)) < gap) {
+          const its = g0.items.concat(g1.items);
+          const c = its.reduce((s, it) => s + it.y, 0) / its.length;
+          groups.splice(i - 1, 2, { items: its, c }); merged = true; break;
+        }
+      }
+    }
+    for (const g of groups) { let y = topOf(g); for (const it of g.items) { it.ly = y; y += gap; } }
+    // 경계 안으로: 아래로 넘치면 위로 밀고, 위로 넘치면 아래로 밀기
+    for (let i = a.length - 1; i >= 0; i--) { const lim = i === a.length - 1 ? bottom : a[i + 1].ly - gap; if (a[i].ly > lim) a[i].ly = lim; }
+    for (let i = 0; i < a.length; i++) { const lim = i === 0 ? top : a[i - 1].ly + gap; if (a[i].ly < lim) a[i].ly = lim; }
+    return a;
+  }
+
   /* ---------- 시계열 정렬 ---------- */
   // 다른 소스 시리즈 {t, ...}를 기준 봉 시각에 맞춰 값 배열로 (없으면 null)
   function alignTo(times, series, key) {
@@ -227,5 +266,5 @@
   }
 
   return { ema, atr, tzParts, kstParts, fmtKstAxis, fmtKstStamp, SESSIONS, sessionOf, sessionLevels,
-    prevDayLevels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, alignTo, resample, fmtBig, fmtPrice };
+    prevDayLevels, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, alignTo, resample, fmtBig, fmtPrice };
 });

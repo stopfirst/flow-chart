@@ -21,7 +21,12 @@ button, select, input { font: inherit; font-size: 13px; color: var(--fg); }
 .legend { flex: 1; font-size: 11px; line-height: 18px; }
 .legend span { display: inline-flex; align-items: center; margin-right: 12px; white-space: nowrap; }
 .legend i { display: inline-block; width: 12px; height: 0; border-top: 2px solid currentColor; margin-right: 4px; }
-.legend i.dot { border-top-style: dotted; }
+.legend i.dot { border-top-style: dashed; border-top-width: 1.5px; }
+.layers { display: flex; gap: 4px; flex-wrap: wrap; padding-top: 2px; }
+.layers button { height: 24px; padding: 0 9px; border-radius: 12px; border: 1px solid var(--line); background: #fff; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.layers button.on { background: #eef1f6; border-color: #c9d3e2; color: var(--fg); }
+.layers button::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: #d6d8de; }
+.layers button.on::before { background: #3b6fa8; }
 .wm { font-size: 10px; letter-spacing: 1px; color: #9aa0aa; white-space: nowrap; padding-top: 4px; }
 
 .body { display: grid; grid-template-columns: 64fr 36fr; gap: 0; margin-top: 8px; }
@@ -119,6 +124,7 @@ html.pk-open body { overflow: hidden; }
   .hdr { flex-wrap: wrap; gap: 6px 12px; }
   .ttl #title { font-size: 18px; }
   .legend { order: 3; flex-basis: 100%; font-size: 10px; line-height: 16px; }
+  .layers { order: 4; flex-basis: 100%; }
   .wm { margin-left: auto; }
   .body { grid-template-columns: 1fr; }
   .mainwrap { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 6px; }

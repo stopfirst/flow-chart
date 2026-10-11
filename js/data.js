@@ -179,7 +179,7 @@
     const shift = (arr) => arr.map(z => ({ ...z, i0: z.i0 - cut, end: z.end == null ? null : z.end - cut, created: z.created != null ? z.created - cut : undefined }));
     const fvg = shift(FC.findFVG(full)).filter(z => (z.end == null || z.end >= 0) && z.i0 >= -20);
     const ob = shift(FC.findOB(full)).filter(z => z.end == null && z.i0 >= -WARMUP);
-    const sessions = FC.sessionLevels(lvl15);
+    const sessions = FC.sessionLevels(lvl15, now);
     const pd = FC.prevDayLevels(lvl15, now);
 
     /* ---------- 사이드 패널 ---------- */

@@ -117,4 +117,34 @@ t('KST 포맷', () => {
   assert.strictEqual(FC.fmtBig(-1.4e9), '-1.40B'); assert.strictEqual(FC.fmtBig(136800, true), '+136.80K');
 });
 
+t('실데이터: ETHUSDT 현물 15m, 2026-10-11 14:30 KST 기준 세션·전일 H/L', () => {
+  const fx = require('./fixtures/ethusdt_spot_15m_20261011.json');
+  const C = fx.rows.map(([t, o, h, l, c]) => mk(t, o, h, l, c));
+  const now = Date.UTC(2026, 9, 11, 5, 30); // 14:30 KST
+  const s = FC.sessionLevels(C, now);
+  // 아시아 10/11 09:00–13:00 KST (완료), 런던 10/10 15–18, 뉴욕 10/10 20–23
+  near(s.asia.h, 2513.59); near(s.asia.l, 2499.24); assert.strictEqual(s.asia.live, false);
+  assert.strictEqual(FC.fmtKstAxis(s.asia.start), '10/11, 09:00'); assert.strictEqual(FC.fmtKstAxis(s.asia.end), '10/11, 12:45');
+  assert.strictEqual(s.asia.schedEnd, Date.UTC(2026, 9, 11, 4)); // 13:00 KST
+  near(s.london.h, 2499.14); near(s.london.l, 2492.34); assert.strictEqual(FC.fmtKstAxis(s.london.start), '10/10, 15:00');
+  near(s.ny.h, 2500.02); near(s.ny.l, 2494.47); assert.strictEqual(FC.fmtKstAxis(s.ny.start), '10/10, 20:00');
+  const pd = FC.prevDayLevels(C, now); // 10/10 09:00 ~ 10/11 09:00 KST
+  near(pd.pdh, 2519.51); near(pd.pdl, 2486.03);
+  // 진행 중: 10:30 KST에 자르면 아시아는 live=true, 지금까지의 봉만
+  const cut = C.filter(c => c.t < Date.UTC(2026, 9, 11, 1, 30));
+  const s2 = FC.sessionLevels(cut, Date.UTC(2026, 9, 11, 1, 30));
+  assert.strictEqual(s2.asia.live, true); assert.strictEqual(FC.fmtKstAxis(s2.asia.end), '10/11, 10:15');
+  assert.ok(s2.asia.h <= 2513.59 && s2.asia.l >= 2499.24);
+  assert.strictEqual(s2.london.live, false);
+});
+
+t('라벨 겹침 방지: 간격·순서·경계', () => {
+  const L = FC.layoutLabels([{ y: 50, id: 'a' }, { y: 52, id: 'b' }, { y: 200, id: 'c' }, { y: 298, id: 'd' }, { y: 299, id: 'e' }], 12, 0, 300);
+  assert.deepStrictEqual(L.map(x => x.id), ['a', 'b', 'c', 'd', 'e']);
+  for (let i = 1; i < L.length; i++) assert.ok(L[i].ly - L[i - 1].ly >= 12 - 1e-9);
+  near(L[0].ly, 45); near(L[1].ly, 57); near(L[2].ly, 200); // 묶음 중심(51) 기준 대칭
+  assert.ok(L[4].ly <= 300 && L[3].ly <= 288);
+  const one = FC.layoutLabels([{ y: 10 }], 12, 0, 100); near(one[0].ly, 10);
+});
+
 console.log(`\n${pass} tests passed`);

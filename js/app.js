@@ -13,6 +13,19 @@
   if (qs.get('bars')) state.bars = +qs.get('bars');
   const MOCK = qs.get('mock') === '1';
 
+  // 차트 레이어 표시 토글 (기본 모두 켬)
+  const LAYERS = [{ k: 'sess', t: '세션' }, { k: 'pd', t: 'PDH·PDL' }, { k: 'ob', t: 'OB' }, { k: 'fvg', t: 'FVG' }];
+  const layers = Object.assign({ sess: true, pd: true, ob: true, fvg: true }, JSON.parse(localStorage.getItem('fc_layers_v1') || '{}'));
+  function renderLayers() {
+    $('layers').innerHTML = LAYERS.map(l => `<button type="button" data-k="${l.k}" aria-pressed="${layers[l.k] ? 'true' : 'false'}" class="${layers[l.k] ? 'on' : ''}">${l.t}</button>`).join('');
+  }
+  $('layers').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-k]'); if (!b) return;
+    layers[b.dataset.k] = !layers[b.dataset.k];
+    localStorage.setItem('fc_layers_v1', JSON.stringify(layers)); renderLayers(); layout();
+  });
+  renderLayers();
+
   let D = null, hover = null, timer = null, loading = false, seq = 0;
   const saveState = () => localStorage.setItem('fc_state_v1', JSON.stringify(state));
 
@@ -32,10 +45,10 @@
     const mainW = Math.max(260, wrap.clientWidth - (narrow ? 0 : 12));
     const mainH = narrow ? Math.round(Math.min(420, Math.max(300, mainW * 0.85))) : Math.round(Math.min(620, Math.max(420, mainW * 0.62)));
     const ctx = R.setupCanvas($('main'), mainW, mainH);
-    const yr = R.drawMain(ctx, 0, 0, mainW, mainH, D, hover, { narrow });
+    const yr = R.drawMain(ctx, 0, 0, mainW, mainH, D, hover, { narrow, show: layers });
     geom.main = yr;
     $('legend1').innerHTML = legendHTML(R.legendItems(D, yr), false);
-    $('legend2').innerHTML = legendHTML(R.LEVEL_LEGEND, true);
+    $('legend2').innerHTML = legendHTML(R.levelLegend(layers), true);
     // 사이드
     const sideW = Math.max(240, side.clientWidth - (narrow ? 0 : 12));
     const n = D.panels.length;
@@ -55,16 +68,28 @@
     if (which === 'main') i = Math.floor((xCss - geom.main.plotL) / geom.main.step);
     else i = Math.floor((xCss - geom.sideL) / (geom.sideW / n));
     const h = i >= 0 && i < n ? i : null;
-    if (h !== hover) { hover = h; layout(); }
+    if (h !== hover) { hover = h; redraw(); }
   }
+  let raf = 0;
+  const redraw = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; layout(); }); };
+  const clearHover = () => { if (hover != null) { hover = null; redraw(); } };
   function bindMini() {
     $('side').querySelectorAll('canvas').forEach(cv => {
       cv.addEventListener('pointermove', e => setHoverFromX(e.offsetX, 'mini'));
-      cv.addEventListener('pointerleave', () => { hover = null; layout(); });
+      cv.addEventListener('pointerleave', clearHover);
+      cv.addEventListener('pointercancel', clearHover); // 터치 스크롤 시작 → 호버 해제
     });
   }
   $('main').addEventListener('pointermove', e => setHoverFromX(e.offsetX, 'main'));
-  $('main').addEventListener('pointerleave', () => { hover = null; layout(); });
+  $('main').addEventListener('pointerleave', clearHover);
+  $('main').addEventListener('pointercancel', clearHover);
+
+  // 현재 서머타임 여부에 따른 KST 세션 시간 표시
+  function sessKst() {
+    const off = (FC.tzParts(Date.now(), 'America/New_York').hour - FC.kstParts(Date.now()).hour + 48) % 24; // ET − KST (시)
+    const k = (h) => String((h - off + 48) % 24).padStart(2, '0');
+    return `KST ${k(20)}–${k(24)} · ${k(2)}–${k(5)} · ${k(7)}–${k(10)}`;
+  }
 
   /* ---------- 로드 ---------- */
   let goodFoot = '';
@@ -80,7 +105,7 @@
       document.title = `${D.sym} ${D.tfLabel} · 플로우 차트`;
       const approx = D.panels.filter(p => p.approx).map(p => p.title.replace(' (근사)', ''));
       goodFoot = [
-        `가격: ${D.src} · 세션(ICT 킬존, ET): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 · 전일 = UTC 일봉(KST 09시 기준)`,
+        `가격: ${D.src} · 세션(ICT 킬존, 뉴욕시간): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 (${sessKst()}) · 각 세션의 가장 최근 회차(진행 중이면 '진행중') · 전일 = UTC 일봉(KST 09시 기준)`,
         approx.length ? `근사: ${approx.join(', ')} (캔들 방향 × 거래대금)` : '',
         ...D.warnings.map(w => `<span class="warn">⚠ ${w}</span>`),
       ].filter(Boolean).join('<br>');
@@ -123,7 +148,7 @@
   $('png').addEventListener('click', async () => {
     if (!D) return;
     const cv = document.createElement('canvas');
-    R.drawCard(cv, D, { label: settings.label });
+    R.drawCard(cv, D, { label: settings.label, show: layers });
     const p = FC.kstParts(D.fetchedAt), pad = (x) => String(x).padStart(2, '0');
     const name = `flow_${D.sym.replace(':', '-')}_${D.tf}_${p.year}${pad(p.month)}${pad(p.day)}_${pad(p.hour)}${pad(p.minute)}.png`;
     const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
@@ -145,7 +170,7 @@
     syncControls(); load();
   });
 
-  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(layout, 120); });
+  let rt, lastW = window.innerWidth; window.addEventListener('resize', () => { if (window.innerWidth === lastW) return; lastW = window.innerWidth; clearTimeout(rt); rt = setTimeout(layout, 120); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden && state.auto > 0 && D && Date.now() - D.fetchedAt > state.auto * 1000) load(); });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
