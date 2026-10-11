@@ -1,0 +1,231 @@
+/* calc.js — 순수 계산 함수 (브라우저 + Node 공용)
+ * candle: {t (ms, 봉 시작), o, h, l, c, v (base), qv (quote), tbq (taker buy quote), tbv (taker buy base)}
+ */
+(function (root, factory) {
+  if (typeof module === 'object' && module.exports) module.exports = factory();
+  else root.FC = factory();
+})(typeof self !== 'undefined' ? self : this, function () {
+  'use strict';
+
+  /* ---------- EMA ---------- */
+  // 표준 EMA: alpha = 2/(n+1), 첫 n개 SMA로 시드. 시드 이전은 null.
+  function ema(values, n) {
+    const out = new Array(values.length).fill(null);
+    if (values.length < n) return out;
+    let sum = 0;
+    for (let i = 0; i < n; i++) sum += values[i];
+    let prev = sum / n;
+    out[n - 1] = prev;
+    const a = 2 / (n + 1);
+    for (let i = n; i < values.length; i++) {
+      prev = values[i] * a + prev * (1 - a);
+      out[i] = prev;
+    }
+    return out;
+  }
+
+  /* ---------- ATR (Wilder) ---------- */
+  function atr(candles, n = 14) {
+    const out = new Array(candles.length).fill(null);
+    if (candles.length <= n) return out;
+    const tr = candles.map((c, i) => {
+      if (i === 0) return c.h - c.l;
+      const pc = candles[i - 1].c;
+      return Math.max(c.h - c.l, Math.abs(c.h - pc), Math.abs(c.l - pc));
+    });
+    let s = 0;
+    for (let i = 1; i <= n; i++) s += tr[i];
+    let prev = s / n;
+    out[n] = prev;
+    for (let i = n + 1; i < candles.length; i++) {
+      prev = (prev * (n - 1) + tr[i]) / n;
+      out[i] = prev;
+    }
+    return out;
+  }
+
+  /* ---------- 시간대 ---------- */
+  const _fmtCache = {};
+  function tzParts(ms, tz) {
+    let f = _fmtCache[tz];
+    if (!f) {
+      f = _fmtCache[tz] = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+    }
+    const p = {};
+    for (const x of f.formatToParts(new Date(ms))) if (x.type !== 'literal') p[x.type] = +x.value;
+    if (p.hour === 24) p.hour = 0;
+    return p; // {year, month, day, hour, minute, second}
+  }
+  const KST_OFFSET = 9 * 3600e3;
+  function kstParts(ms) { // KST는 서머타임 없음 → 고정 +9
+    const d = new Date(ms + KST_OFFSET);
+    return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(),
+      hour: d.getUTCHours(), minute: d.getUTCMinutes(), second: d.getUTCSeconds() };
+  }
+  const p2 = (n) => String(n).padStart(2, '0');
+  function fmtKstAxis(ms) { const p = kstParts(ms); return `${p2(p.month)}/${p2(p.day)}, ${p2(p.hour)}:${p2(p.minute)}`; }
+  function fmtKstStamp(ms) { const p = kstParts(ms); return `${p.year}. ${p2(p.month)}. ${p2(p.day)}. ${p2(p.hour)}:${p2(p.minute)}:${p2(p.second)} KST`; }
+
+  /* ---------- 세션 (ICT 킬존, 뉴욕 현지시간 기준 · DST 자동 반영) ----------
+   * 아시아 20:00–24:00 ET, 런던 02:00–05:00 ET, 뉴욕 07:00–10:00 ET
+   * (EDT 기간 KST: 아시아 09–13시, 런던 15–18시, 뉴욕 20–23시 / EST 기간은 각 +1시간)
+   * 봉의 시작 시각이 [시작, 끝) 안에 있으면 그 세션에 포함. 15분봉으로 계산하는 것을 권장. */
+  const SESSIONS = [
+    { key: 'asia', name: 'ASIA', start: 20, end: 24 },
+    { key: 'london', name: 'LONDON', start: 2, end: 5 },
+    { key: 'ny', name: 'NY', start: 7, end: 10 },
+  ];
+  function sessionOf(ms) {
+    const p = tzParts(ms, 'America/New_York');
+    const hm = p.hour + p.minute / 60;
+    for (const s of SESSIONS) if (hm >= s.start && hm < s.end) return { s, p };
+    return null;
+  }
+  // 각 세션의 "가장 최근 인스턴스"(진행 중 포함)의 고가/저가와 시작 시각.
+  function sessionLevels(candles) {
+    const res = {};
+    let cur = null; // {key, id, start, h, l, end}
+    const last = {};
+    for (const c of candles) {
+      const so = sessionOf(c.t);
+      if (!so) { cur = null; continue; }
+      const id = so.s.key + ':' + so.p.year + '-' + so.p.month + '-' + so.p.day;
+      if (!cur || cur.id !== id) {
+        cur = { key: so.s.key, name: so.s.name, id, start: c.t, h: c.h, l: c.l, end: c.t };
+        last[so.s.key] = cur;
+      } else {
+        cur.h = Math.max(cur.h, c.h); cur.l = Math.min(cur.l, c.l); cur.end = c.t;
+      }
+    }
+    for (const k of Object.keys(last)) res[k] = last[k];
+    return res;
+  }
+
+  /* ---------- 전일 고가/저가 (UTC 일봉 = KST 09:00 기준) ---------- */
+  function prevDayLevels(candles, nowMs) {
+    const day = 86400e3;
+    const todayStart = Math.floor((nowMs ?? candles[candles.length - 1].t) / day) * day;
+    const yStart = todayStart - day;
+    let h = -Infinity, l = Infinity, n = 0;
+    for (const c of candles) if (c.t >= yStart && c.t < todayStart) { h = Math.max(h, c.h); l = Math.min(l, c.l); n++; }
+    if (!n) return null;
+    return { pdh: h, pdl: l, start: yStart, end: todayStart };
+  }
+
+  /* ---------- CVD ----------
+   * delta = 테이커 매수 − 테이커 매도 = 2·buy − total. 누적합(첫 봉에서 0부터 시작하지 않고 첫 봉 delta부터). */
+  function cvdFromBuyTotal(buy, total) {
+    const out = []; let s = 0;
+    for (let i = 0; i < buy.length; i++) {
+      if (buy[i] == null || total[i] == null) { out.push(null); continue; }
+      s += 2 * buy[i] - total[i]; out.push(s);
+    }
+    return out;
+  }
+  // 근사 CVD(테이커 데이터 없을 때): 양봉이면 +거래대금, 음봉이면 −거래대금, 도지는 0
+  function cvdApprox(candles) {
+    const out = []; let s = 0;
+    for (const c of candles) { const q = c.qv ?? c.v * c.c; s += Math.sign(c.c - c.o) * q; out.push(s); }
+    return out;
+  }
+
+  /* ---------- FVG (3봉 공정가치갭) ----------
+   * 강세: low[i+1] > high[i-1] → 구간 [high[i-1], low[i+1]] (i = 가운데 봉)
+   * 약세: high[i+1] < low[i-1] → 구간 [high[i+1], low[i-1]]
+   * 최소 크기: 갭 ≥ minAtr × ATR14 (기본 0.1)
+   * 메움(fill): 이후 봉이 갭 반대편 끝까지 닿으면 (강세: low ≤ 하단, 약세: high ≥ 상단) 그 봉에서 종료 */
+  function findFVG(candles, opts = {}) {
+    const minAtr = opts.minAtr ?? 0.1;
+    const A = atr(candles, 14);
+    const out = [];
+    for (let i = 1; i < candles.length - 1; i++) {
+      const a = candles[i - 1], b = candles[i + 1];
+      const thr = (A[i] ?? (candles[i].h - candles[i].l)) * minAtr;
+      let g = null;
+      if (b.l > a.h && b.l - a.h >= thr) g = { dir: 'bull', top: b.l, bottom: a.h };
+      else if (b.h < a.l && a.l - b.h >= thr) g = { dir: 'bear', top: a.l, bottom: b.h };
+      if (!g) continue;
+      g.i0 = i - 1; g.created = i + 1; g.end = null;
+      for (let k = i + 2; k < candles.length; k++) {
+        const c = candles[k];
+        if ((g.dir === 'bull' && c.l <= g.bottom) || (g.dir === 'bear' && c.h >= g.top)) { g.end = k; break; }
+      }
+      out.push(g);
+    }
+    return out;
+  }
+
+  /* ---------- 오더블록 (OB) ----------
+   * 강세 OB: 음봉 j 다음 봉 j+1이 양봉이고, j+1..j+3 중 어떤 종가가 high[j]를 상향 돌파하며,
+   *          max(high[j+1..j+3]) − low[j] ≥ disp × ATR14 (기본 1.5) → 구간 [low[j], high[j]]
+   * 약세 OB: 양봉 j, j+1 음봉, j+1..j+3 중 종가가 low[j] 하향 돌파, high[j] − min(low[j+1..j+3]) ≥ disp × ATR
+   * 무효화: 이후 종가가 구간을 반대로 이탈(강세: close < low[j], 약세: close > high[j]) → end = 그 봉
+   * 첫 터치(mitigation) 시각은 touched로 기록(표시용) */
+  function findOB(candles, opts = {}) {
+    const disp = opts.disp ?? 1.5, look = 3;
+    const A = atr(candles, 14);
+    const out = [];
+    for (let j = 1; j < candles.length - 1; j++) {
+      const c = candles[j], n1 = candles[j + 1];
+      const a = A[j]; if (a == null) continue;
+      const seg = candles.slice(j + 1, Math.min(candles.length, j + 1 + look));
+      let ob = null;
+      if (c.c < c.o && n1.c > n1.o) {
+        const brk = seg.some(x => x.c > c.h), mx = Math.max(...seg.map(x => x.h));
+        if (brk && mx - c.l >= disp * a) ob = { dir: 'bull', top: c.h, bottom: c.l };
+      } else if (c.c > c.o && n1.c < n1.o) {
+        const brk = seg.some(x => x.c < c.l), mn = Math.min(...seg.map(x => x.l));
+        if (brk && c.h - mn >= disp * a) ob = { dir: 'bear', top: c.h, bottom: c.l };
+      }
+      if (!ob) continue;
+      ob.i0 = j; ob.end = null; ob.touched = null;
+      for (let k = j + look + 1; k < candles.length; k++) {
+        const x = candles[k];
+        if (ob.touched == null && ((ob.dir === 'bull' && x.l <= ob.top) || (ob.dir === 'bear' && x.h >= ob.bottom))) ob.touched = k;
+        if ((ob.dir === 'bull' && x.c < ob.bottom) || (ob.dir === 'bear' && x.c > ob.top)) { ob.end = k; break; }
+      }
+      out.push(ob);
+    }
+    return out;
+  }
+
+  /* ---------- 시계열 정렬 ---------- */
+  // 다른 소스 시리즈 {t, ...}를 기준 봉 시각에 맞춰 값 배열로 (없으면 null)
+  function alignTo(times, series, key) {
+    const m = new Map(series.map(x => [x.t, x[key]]));
+    return times.map(t => (m.has(t) ? m.get(t) : null));
+  }
+  // 하위 봉을 상위 봉 버킷으로 합산 (예: 1h → 4h). 버킷은 UTC 기준 tfMs 정렬.
+  function resample(candles, tfMs) {
+    const out = []; let cur = null;
+    for (const c of candles) {
+      const b = Math.floor(c.t / tfMs) * tfMs;
+      if (!cur || cur.t !== b) { cur = { t: b, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v }; out.push(cur); }
+      else { cur.h = Math.max(cur.h, c.h); cur.l = Math.min(cur.l, c.l); cur.c = c.c; cur.v += c.v; }
+    }
+    return out;
+  }
+
+  /* ---------- 숫자 포맷 ---------- */
+  function fmtBig(x, sign) {
+    if (x == null || !isFinite(x)) return '–';
+    const a = Math.abs(x); let s;
+    if (a >= 1e9) s = (a / 1e9).toFixed(2) + 'B';
+    else if (a >= 1e6) s = (a / 1e6).toFixed(2) + 'M';
+    else if (a >= 1e3) s = (a / 1e3).toFixed(2) + 'K';
+    else s = a.toFixed(2);
+    return (x < 0 ? '-' : (sign && x > 0 ? '+' : '')) + s;
+  }
+  function fmtPrice(x, ref) {
+    if (x == null || !isFinite(x)) return '–';
+    const r = Math.abs(ref ?? x);
+    const d = r >= 10000 ? 1 : r >= 100 ? 2 : r >= 1 ? 3 : 5;
+    return x.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
+  return { ema, atr, tzParts, kstParts, fmtKstAxis, fmtKstStamp, SESSIONS, sessionOf, sessionLevels,
+    prevDayLevels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, alignTo, resample, fmtBig, fmtPrice };
+});

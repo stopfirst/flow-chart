@@ -1,0 +1,59 @@
+:root { --fg:#3b3f46; --muted:#8a8f99; --line:#e6e6ea; --bg:#f6f6f8; --accent:#3b6fa8; }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg);
+  font-family: 'Pretendard','Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic',system-ui,sans-serif; }
+body { padding: 12px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+.muted { color: var(--muted); } .small { font-size: 12px; }
+button, select, input { font: inherit; font-size: 13px; color: var(--fg); }
+.toolbar { max-width: 1400px; margin: 0 auto 10px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.grp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.toolbar button, .toolbar select, .toolbar input { height: 34px; border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 0 10px; }
+.toolbar button:active { background: #f0f0f4; }
+#sym { width: 120px; font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+.seg button { border: 0 !important; border-radius: 0 !important; }
+.seg button.on { background: #3b3f46; color: #fff; }
+#png { background: #3b3f46 !important; color: #fff; border-color: #3b3f46 !important; }
+
+.card { max-width: 1400px; margin: 0 auto; background: #fff; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.06); padding: 14px 18px 10px; }
+.hdr { display: flex; align-items: flex-start; gap: 22px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.ttl #title { font-size: 20px; font-weight: 500; letter-spacing: .2px; white-space: nowrap; }
+.ttl #stamp { font-size: 11px; margin-top: 2px; white-space: nowrap; }
+.legend { flex: 1; font-size: 11px; line-height: 18px; }
+.legend span { display: inline-flex; align-items: center; margin-right: 12px; white-space: nowrap; }
+.legend i { display: inline-block; width: 12px; height: 0; border-top: 2px solid currentColor; margin-right: 4px; }
+.legend i.dot { border-top-style: dotted; }
+.wm { font-size: 10px; letter-spacing: 1px; color: #9aa0aa; white-space: nowrap; padding-top: 4px; }
+
+.body { display: grid; grid-template-columns: 64fr 36fr; gap: 0; margin-top: 8px; }
+.mainwrap { position: relative; border-right: 1px solid var(--line); padding-right: 12px; min-width: 0; }
+.mainwrap canvas { display: block; touch-action: pan-y; }
+.side { padding-left: 12px; display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+.side canvas { display: block; border-bottom: 1px solid #ececf0; touch-action: pan-y; }
+.loading { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(255,255,255,.6); font-size: 13px; color: var(--muted); }
+.loading.on { display: flex; }
+.foot { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
+.foot .warn { color: #b06a3a; }
+
+dialog { border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: min(440px, 92vw); }
+dialog::backdrop { background: rgba(0,0,0,.25); }
+dialog h3 { margin: 0 0 12px; }
+dialog label { display: block; font-size: 13px; margin-bottom: 12px; }
+dialog label small { color: var(--muted); }
+dialog input { width: 100%; height: 36px; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
+dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
+dialog button { height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
+dialog button.primary { background: #3b3f46; color: #fff; border-color: #3b3f46; }
+
+@media (max-width: 760px) {
+  body { padding: 8px; }
+  .card { padding: 10px 10px 8px; }
+  .hdr { flex-wrap: wrap; gap: 6px 12px; }
+  .ttl #title { font-size: 18px; }
+  .legend { order: 3; flex-basis: 100%; font-size: 10px; line-height: 16px; }
+  .wm { margin-left: auto; }
+  .body { grid-template-columns: 1fr; }
+  .mainwrap { border-right: 0; padding-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  .side { padding-left: 0; padding-top: 4px; }
+  #sym { width: 104px; }
+}

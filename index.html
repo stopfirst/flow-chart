@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>플로우 차트 · STOPFIRST</title>
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="가격·ICT 레벨 + 프리미엄 + 거래소별 CVD + 합산 청산을 한 장으로 보는 플로우 차트">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="toolbar">
+  <div class="grp">
+    <input id="sym" list="symlist" value="BTC" spellcheck="false" autocapitalize="characters" aria-label="심볼">
+    <datalist id="symlist">
+      <option value="BTC"><option value="ETH"><option value="SOL"><option value="XRP"><option value="DOGE"><option value="HYPE">
+      <option value="xyz:SP500"><option value="xyz:XYZ100"><option value="xyz:GOLD"><option value="xyz:SILVER"><option value="xyz:NVDA"><option value="xyz:TSLA"><option value="xyz:CL"><option value="xyz:KR200">
+    </datalist>
+    <div class="seg" id="tfseg">
+      <button data-tf="15m">15분</button><button data-tf="1h">1시간</button><button data-tf="4h">4시간</button>
+    </div>
+    <select id="bars" aria-label="봉 개수">
+      <option value="60">60봉</option><option value="100">100봉</option><option value="150">150봉</option><option value="200">200봉</option>
+    </select>
+  </div>
+  <div class="grp">
+    <button id="refresh" title="새로고침">⟳ 새로고침</button>
+    <select id="auto" aria-label="자동 새로고침">
+      <option value="0">자동 끔</option><option value="60">1분</option><option value="120">2분</option><option value="300">5분</option><option value="900">15분</option>
+    </select>
+    <button id="png">PNG 저장</button>
+    <button id="gear" title="설정">⚙ 설정</button>
+  </div>
+</div>
+
+<div class="card" id="card">
+  <header class="hdr">
+    <div class="ttl"><div id="title">–</div><div id="stamp" class="muted">불러오는 중…</div></div>
+    <div class="legend"><div id="legend1"></div><div id="legend2"></div></div>
+    <div class="wm" id="wm">STOPFIRST</div>
+  </header>
+  <div class="body">
+    <div class="mainwrap" id="mainwrap"><canvas id="main"></canvas><div id="loading" class="loading">불러오는 중…</div></div>
+    <div class="side" id="side"></div>
+  </div>
+  <div class="foot" id="foot"></div>
+</div>
+
+<dialog id="settings">
+  <form method="dialog">
+    <h3>설정</h3>
+    <label>Coinalyze API 키 <small>(이 기기 브라우저 localStorage에만 저장)</small>
+      <input id="caKey" type="password" autocomplete="off" placeholder="coinalyze.net → 계정 → API key">
+    </label>
+    <label>Coinalyze 프록시 URL <small>(선택 · CORS 차단 시)</small>
+      <input id="caProxy" type="url" placeholder="https://api.coinalyze.net/v1">
+    </label>
+    <label>워터마크 라벨
+      <input id="label" maxlength="24" placeholder="STOPFIRST">
+    </label>
+    <p class="muted small">키가 없으면 Coinbase 현물·Hyperliquid CVD는 캔들 방향 기반 <b>근사치</b>로 표시되고, 합산 청산 패널은 숨겨집니다.</p>
+    <div class="row"><button value="cancel">닫기</button><button id="saveSettings" value="save" class="primary">저장</button></div>
+  </form>
+</dialog>
+
+<script src="js/calc.js"></script>
+<script src="js/data.js"></script>
+<script src="js/render.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
