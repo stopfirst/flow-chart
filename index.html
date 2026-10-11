@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>플로우 차트 · STOPFIRST</title>
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="가격·ICT 레벨 + 프리미엄 + 거래소별 CVD + 합산 청산을 한 장으로 보는 플로우 차트">
@@ -13,12 +13,11 @@
 </head>
 <body>
 <div class="toolbar">
-  <div class="grp">
-    <input id="sym" list="symlist" value="BTC" spellcheck="false" autocapitalize="characters" aria-label="심볼">
-    <datalist id="symlist">
-      <option value="BTC"><option value="ETH"><option value="SOL"><option value="XRP"><option value="DOGE"><option value="HYPE">
-      <option value="xyz:SP500"><option value="xyz:XYZ100"><option value="xyz:GOLD"><option value="xyz:SILVER"><option value="xyz:NVDA"><option value="xyz:TSLA"><option value="xyz:CL"><option value="xyz:KR200">
-    </datalist>
+  <div class="grp g1">
+    <div class="symrow">
+      <button id="symbtn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-label="심볼 선택 (단축키 /)"><span id="symtxt">BTC</span><span class="caret" aria-hidden="true">▾</span></button>
+      <div id="favchips" class="chips" aria-label="즐겨찾기"></div>
+    </div>
     <div class="seg" id="tfseg">
       <button data-tf="15m">15분</button><button data-tf="1h">1시간</button><button data-tf="4h">4시간</button>
     </div>
@@ -69,6 +68,7 @@
 <script src="js/calc.js"></script>
 <script src="js/data.js"></script>
 <script src="js/render.js"></script>
+<script src="js/picker.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

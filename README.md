@@ -6,6 +6,9 @@
 **바로 열기:** https://stopfirst.github.io/flow-chart/
 
 - 주소 파라미터: `?s=BTC&tf=1h` · `?s=xyz:SP500&tf=4h` · `&bars=150` · `&mock=1`(모의 데이터 데모)
+- **심볼 선택**: 툴바의 심볼 버튼(또는 PC에서 `/` 키) → 검색(티커·한글/영문 이름: `비트`, `금`, `나스닥`, `테슬라`…) + 탭(★즐겨찾기 / 최근 / 코인 / 주식·지수 / 원자재). 목록은 Hyperliquid 메인 무기한 + 모든 HIP-3 dex(xyz 등)에서 실시간으로 불러오며(10분 캐시) 가격 · 24h 변동률 · 24h 거래대금순. `BN`(Binance USDT 페어) · `CB`(Coinbase USD 현물) 배지는 해당 패널이 그려질 수 있다는 뜻입니다(24시간 캐시). 목록에 없는 심볼도 입력 후 Enter로 열 수 있습니다. 휴대폰에서는 아래에서 올라오는 시트, PC에서는 드롭다운(↑↓ · Enter · Esc).
+- **즐겨찾기 칩**: 심볼 버튼 옆 가로 스크롤 칩으로 한 번에 전환. 목록의 ☆로 추가/삭제(기본: BTC · ETH · SOL · HYPE · xyz:SP500). 최근 8개 자동 기록.
+- 없는 심볼을 열면 마지막 정상 차트를 유지하고 "종목을 찾지 못했어요: XXX"를 표시합니다.
 - 휴대폰: 사이드 패널이 메인 차트 아래로 쌓입니다. 홈 화면에 추가하면 앱처럼 실행됩니다(PWA).
 - **PNG 저장**: 화면 크기와 상관없이 항상 가로형(1600×860, 2배 해상도) 카드로 저장합니다. 휴대폰에서는 공유 시트가 열립니다.
 
@@ -75,10 +78,11 @@
 ## 개발
 
 ```
+node tests/test_picker.js   # 심볼 검색(한글 별칭) · 카테고리 · HL 파싱 · 포맷
 node tests/test_calc.js     # EMA · ATR · 세션(DST) · 전일 레벨 · CVD · FVG · OB · 리샘플 · 포맷 테스트
 python3 -m http.server      # 로컬 실행 → http://localhost:8000/?mock=1
 ```
 
-파일: `index.html` · `css/style.css` · `js/calc.js`(순수 계산) · `js/data.js`(API 수집) · `js/render.js`(캔버스 렌더) · `js/app.js`(UI) · `sw.js` · `manifest.webmanifest`
+파일: `index.html` · `css/style.css` · `js/calc.js`(순수 계산) · `js/data.js`(API 수집) · `js/render.js`(캔버스 렌더) · `js/picker.js`(심볼 선택기) · `js/app.js`(UI) · `sw.js` · `manifest.webmanifest`
 
 데이터 출처: Binance · Coinbase Exchange · Hyperliquid · [Coinalyze](https://coinalyze.net)

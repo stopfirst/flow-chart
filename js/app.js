@@ -1,7 +1,7 @@
 /* app.js — UI 상태, 레이아웃, 이벤트 */
 (function () {
   'use strict';
-  const FC = self.FC, R = self.FCRender, DATA = self.FCData;
+  const FC = self.FC, R = self.FCRender, DATA = self.FCData, PK = self.FCPicker;
   const $ = (id) => document.getElementById(id);
   const qs = new URLSearchParams(location.search);
   const LS = 'fc_settings_v1';
@@ -16,11 +16,8 @@
   let D = null, hover = null, timer = null, loading = false, seq = 0;
   const saveState = () => localStorage.setItem('fc_state_v1', JSON.stringify(state));
 
-  function normSym(s) {
-    s = (s || '').trim(); if (!s) return 'BTC';
-    if (s.includes(':')) { const [d, c] = s.split(':'); return d.toLowerCase() + ':' + c.toUpperCase(); }
-    return s.toUpperCase().replace(/USDT$|-USD$|USD$/, '') || 'BTC';
-  }
+  const normSym = (s) => PK.normSym(s) || 'BTC';
+  state.sym = normSym(state.sym);
 
   /* ---------- 헤더 ---------- */
   function legendHTML(items, dot) {
@@ -70,32 +67,40 @@
   $('main').addEventListener('pointerleave', () => { hover = null; layout(); });
 
   /* ---------- 로드 ---------- */
+  let goodFoot = '';
   async function load() {
-    const my = ++seq; loading = true; $('loading').classList.add('on');
+    const my = ++seq, want = state.sym; loading = true; $('loading').classList.add('on');
     try {
-      const d = await DATA.loadAll({ sym: state.sym, tf: state.tf, bars: state.bars, settings, mock: MOCK });
-      if (my !== seq) return;
+      const d = await DATA.loadAll({ sym: want, tf: state.tf, bars: state.bars, settings, mock: MOCK });
+      if (my !== seq) return; // 더 새 요청이 있으면 이 응답은 버림
       D = d;
       $('title').textContent = `${D.sym} · ${D.tfLabel}`;
       $('stamp').textContent = FC.fmtKstStamp(D.fetchedAt) + (MOCK ? ' · 모의 데이터' : '');
+      $('stamp').title = '';
       document.title = `${D.sym} ${D.tfLabel} · 플로우 차트`;
       const approx = D.panels.filter(p => p.approx).map(p => p.title.replace(' (근사)', ''));
-      $('foot').innerHTML = [
+      goodFoot = [
         `가격: ${D.src} · 세션(ICT 킬존, ET): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 · 전일 = UTC 일봉(KST 09시 기준)`,
         approx.length ? `근사: ${approx.join(', ')} (캔들 방향 × 거래대금)` : '',
         ...D.warnings.map(w => `<span class="warn">⚠ ${w}</span>`),
       ].filter(Boolean).join('<br>');
+      $('foot').innerHTML = goodFoot; // 이전 오류/경고는 여기서 모두 교체
       hover = null; layout();
     } catch (e) {
       if (my !== seq) return;
-      $('stamp').textContent = '오류: ' + e.message;
-      $('foot').innerHTML = `<span class="warn">⚠ ${e.message}</span>`;
+      const same = D && D.sym === want;
+      const msg = same ? '새로고침 실패 · 이전 데이터 표시 중' : `종목을 찾지 못했어요: ${want}`;
+      if (!same) PK.dropRecent(want);
+      if (D && !same) { state.sym = D.sym; saveState(); syncControls(); if (picker) picker.renderChips(); } // 마지막 정상 차트 유지
+      $('stamp').textContent = D ? FC.fmtKstStamp(D.fetchedAt) + ' · ' + msg : msg;
+      $('stamp').title = e.message;
+      $('foot').innerHTML = (D ? goodFoot + '<br>' : '') + `<span class="warn">⚠ ${msg}</span>`;
     } finally { if (my === seq) { loading = false; $('loading').classList.remove('on'); } }
   }
 
   /* ---------- 컨트롤 ---------- */
   function syncControls() {
-    $('sym').value = state.sym; $('bars').value = String(state.bars); $('auto').value = String(state.auto);
+    $('symtxt').textContent = state.sym; $('bars').value = String(state.bars); $('auto').value = String(state.auto);
     document.querySelectorAll('#tfseg button').forEach(b => b.classList.toggle('on', b.dataset.tf === state.tf));
     $('wm').textContent = settings.label || 'STOPFIRST';
     const u = new URL(location.href); u.searchParams.set('s', state.sym); u.searchParams.set('tf', state.tf); history.replaceState(null, '', u);
@@ -104,9 +109,12 @@
     clearInterval(timer); timer = null;
     if (state.auto > 0) timer = setInterval(() => { if (!loading && !document.hidden) load(); }, state.auto * 1000);
   }
-  const change = () => { saveState(); syncControls(); load(); };
-  $('sym').addEventListener('change', () => { state.sym = normSym($('sym').value); change(); });
-  $('sym').addEventListener('keydown', e => { if (e.key === 'Enter') $('sym').blur(); });
+  const change = () => { saveState(); syncControls(); if (picker) picker.renderChips(); load(); };
+  let picker = null;
+  picker = PK.init({
+    button: $('symbtn'), chips: $('favchips'), getSym: () => state.sym,
+    onPick: (s) => { s = normSym(s); if (s === state.sym) return; state.sym = s; change(); },
+  });
   document.querySelectorAll('#tfseg button').forEach(b => b.addEventListener('click', () => { state.tf = b.dataset.tf; change(); }));
   $('bars').addEventListener('change', () => { state.bars = +$('bars').value; change(); });
   $('auto').addEventListener('change', () => { state.auto = +$('auto').value; saveState(); setAuto(); });
@@ -141,7 +149,8 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden && state.auto > 0 && D && Date.now() - D.fetchedAt > state.auto * 1000) load(); });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  self.__fc = { get D() { return D; }, load, settings };
+  self.__fc = { get D() { return D; }, load, settings, get picker() { return picker; } };
 
+  PK.pushRecent(state.sym); picker.renderChips();
   syncControls(); setAuto(); load();
 })();
