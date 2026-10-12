@@ -6,11 +6,11 @@
   const COL = {
     up: '#5aa889', down: '#c8607e', grid: '#efeff2', axis: '#8a8f99', text: '#3b3f46',
     ema: { 20: '#2f86a6', 50: '#9a5fb0', 100: '#d08a3a', 200: '#4a5fb8' },
-    asia: '#5b7fc7', london: '#3f9a6e', ny: '#d08a3a', pd: '#9aa0aa',
+    asia: '#5b7fc7', london: '#3f9a6e', ny: '#d08a3a', pd: '#9aa0aa', mid: '#b8862f', tdo: '#d0688c',
   };
   const SESSION_COL = { asia: COL.asia, london: COL.london, ny: COL.ny };
   const hexRgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
-  const RGB = { asia: hexRgb(COL.asia), london: hexRgb(COL.london), ny: hexRgb(COL.ny), pd: '128,134,146', bull: '80,160,125', bear: '200,96,126' };
+  const RGB = { asia: hexRgb(COL.asia), london: hexRgb(COL.london), ny: hexRgb(COL.ny), pd: '128,134,146', mid: hexRgb(COL.mid), tdo: hexRgb(COL.tdo), bull: '80,160,125', bear: '200,96,126' };
 
   function xLabelIdx(n) { return [Math.round(n * 0.08), Math.round(n * 0.5), Math.round(n * 0.92) - 1].map(i => Math.max(0, Math.min(n - 1, i))); }
 
@@ -42,7 +42,7 @@
     ctx.fillStyle = COL.text; ctx.font = `${fs + 1}px ${FONT}`; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
     ctx.fillText('가격·ICT', 4, 2);
     const narrow = !!opt.narrow;
-    const show = Object.assign({ sess: true, pd: true, ob: true, fvg: true }, opt.show || {});
+    const show = Object.assign({ sess: true, pd: true, ob: true, fvg: true, tdo: true }, opt.show || {});
     const T = 26, B = 24, L = narrow ? 50 : 58;
     const lastC = C[n - 1].c, ref = Math.abs(lastC);
 
@@ -53,7 +53,9 @@
     if (show.pd && D.pd) {
       levels.push({ v: D.pd.pdh, name: 'PDH', key: 'pd' });
       levels.push({ v: D.pd.pdl, name: 'PDL', key: 'pd' });
+      if (D.pd.mid != null) levels.push({ v: D.pd.mid, name: narrow ? 'MID' : 'PD MID', key: 'mid' });
     }
+    if (show.tdo && D.tdo) levels.push({ v: D.tdo.o, name: D.tdo.approx ? 'TDO≈' : 'TDO', key: 'tdo' });
     const sessList = [];
     if (show.sess) for (const k of ['asia', 'london', 'ny']) {
       const s = D.sessions && D.sessions[k]; if (!s) continue;
@@ -89,6 +91,8 @@
     const step = pw / n;
     const X = (i) => L + (i + 0.5) * step;
     const Y = (v) => T + (hi - v) / (hi - lo) * ph;
+    // 시각 → x (봉 안에서 비례 위치). 화면 왼쪽보다 이르면 null
+    const XT = (t) => { const i = idxOfTime(D.times, t, D.tfMs); return i < 0 ? null : Math.min(L + pw, X(i) - step / 2 + Math.max(0, Math.min(1, (t - D.times[i]) / D.tfMs)) * step); };
 
     // 그리드 + y축
     ctx.font = `${fs - 1}px ${FONT}`; ctx.textBaseline = 'middle';
@@ -125,6 +129,26 @@
       const y = Math.round(Y(v)) + 0.5;
       ctx.strokeStyle = `rgba(${RGB.pd},0.95)`; ctx.setLineDash([5, 4]); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(L + pw, y); ctx.stroke(); ctx.setLineDash([]);
+    }
+    // 전일 MID: 굵은 금색 실선, 오늘(UTC 일봉) 시작부터 오른쪽 끝까지
+    if (show.pd && D.pd && D.pd.mid != null && inR(D.pd.mid)) {
+      const xa = XT(D.pd.end) ?? L, y = Y(D.pd.mid);
+      ctx.strokeStyle = COL.mid; ctx.lineWidth = 1.75; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(L + pw, y); ctx.stroke();
+    }
+    // TDO: 뉴욕 00:00 봉에 연한 세로 파선 + 그 봉부터 오른쪽 끝까지 얇은 로즈색 실선
+    if (show.tdo && D.tdo) {
+      const xt = XT(D.tdo.t), xa = xt ?? L;
+      if (xt != null) {
+        const xv = Math.round(xt) + 0.5;
+        ctx.strokeStyle = `rgba(${RGB.tdo},0.45)`; ctx.lineWidth = 1; ctx.setLineDash([3, 4]);
+        ctx.beginPath(); ctx.moveTo(xv, T); ctx.lineTo(xv, T + ph); ctx.stroke(); ctx.setLineDash([]);
+      }
+      if (inR(D.tdo.o)) {
+        const y = Math.round(Y(D.tdo.o)) + 0.5;
+        ctx.strokeStyle = COL.tdo; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(xa, y); ctx.lineTo(L + pw, y); ctx.stroke();
+      }
     }
     // 세션: 자기 시간대 위에 연한 파선 박스 + 끝난 뒤 H/L을 오른쪽 끝까지 연장
     for (const { k, s } of sessList) {
@@ -273,13 +297,14 @@
     }
     return items;
   }
-  const LEVEL_LEGEND = [{ text: '아시아 H/L', col: COL.asia, k: 'sess' }, { text: '런던 H/L', col: COL.london, k: 'sess' }, { text: '뉴욕 H/L', col: COL.ny, k: 'sess' }, { text: '전일 H/L', col: COL.pd, k: 'pd' }];
+  const LEVEL_LEGEND = [{ text: '아시아 H/L', col: COL.asia, k: 'sess' }, { text: '런던 H/L', col: COL.london, k: 'sess' }, { text: '뉴욕 H/L', col: COL.ny, k: 'sess' }, { text: '전일 H/L', col: COL.pd, k: 'pd' },
+    { text: '전일 MID', col: COL.mid, k: 'pd', solid: true }, { text: 'TDO', col: COL.tdo, k: 'tdo', solid: true }];
   const levelLegend = (show) => LEVEL_LEGEND.filter(it => !show || show[it.k] !== false);
 
   function drawLegendRow(ctx, x, y, items, dotted, fs) {
     ctx.font = `${fs}px ${FONT}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     for (const it of items) {
-      ctx.strokeStyle = it.col; ctx.lineWidth = 1.6; ctx.setLineDash(dotted ? [4, 3] : []);
+      ctx.strokeStyle = it.col; ctx.lineWidth = 1.6; ctx.setLineDash(dotted && !it.solid ? [4, 3] : []);
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 12, y); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = it.col; ctx.fillText(it.text, x + 16, y); x += 16 + ctx.measureText(it.text).width + 12;
     }

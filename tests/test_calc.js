@@ -147,4 +147,37 @@ t('라벨 겹침 방지: 간격·순서·경계', () => {
   const one = FC.layoutLabels([{ y: 10 }], 12, 0, 100); near(one[0].ly, 10);
 });
 
+t('실데이터: 전일 MID = (PDH+PDL)/2', () => {
+  const fx = require('./fixtures/ethusdt_spot_15m_20261011.json');
+  const C = fx.rows.map(([t, o, h, l, c]) => mk(t, o, h, l, c));
+  const pd = FC.prevDayLevels(C, Date.UTC(2026, 9, 11, 5, 30));
+  near(pd.mid, (2519.51 + 2486.03) / 2, 1e-9); near(pd.mid, 2502.77, 1e-9);
+});
+
+t('실데이터: TDO = 10/11 13:00 KST(04:00 UTC, EDT) 봉 시가', () => {
+  const fx = require('./fixtures/ethusdt_spot_15m_20261011.json');
+  const C = fx.rows.map(([t, o, h, l, c]) => mk(t, o, h, l, c));
+  const t0 = Date.UTC(2026, 9, 11, 4);
+  const bar = C.find(c => c.t === t0); assert.ok(bar, '픽스처에 04:00 UTC 봉이 있어야 함');
+  const td = FC.trueDayOpen(C, Date.UTC(2026, 9, 11, 5, 30), 15 * 60e3);
+  assert.strictEqual(td.t, t0); assert.strictEqual(td.barT, t0); assert.strictEqual(td.approx, false);
+  near(td.o, bar.o);
+  assert.strictEqual(FC.fmtKstAxis(td.t), '10/11, 13:00');
+  // 뉴욕 자정 이전(12:30 KST)이면 직전 자정(10/10 04:00 UTC)
+  assert.strictEqual(FC.nyMidnight(Date.UTC(2026, 9, 11, 3, 30)), Date.UTC(2026, 9, 10, 4));
+});
+
+t('TDO: 뉴욕 자정 DST (EDT 04:00Z → EST 05:00Z, 2026-11-01 전환)', () => {
+  assert.strictEqual(FC.nyMidnight(Date.UTC(2026, 10, 2, 12)), Date.UTC(2026, 10, 2, 5)); // 11/02 EST
+  assert.strictEqual(FC.nyMidnight(Date.UTC(2026, 10, 2, 5)), Date.UTC(2026, 10, 2, 5));  // 정각 포함
+  assert.strictEqual(FC.nyMidnight(Date.UTC(2026, 10, 2, 4, 59)), Date.UTC(2026, 10, 1, 4)); // 11/01 자정은 아직 EDT
+  assert.strictEqual(FC.nyMidnight(Date.UTC(2026, 10, 1, 12)), Date.UTC(2026, 10, 1, 4));
+  assert.strictEqual(FC.nyMidnight(Date.UTC(2027, 2, 15, 12)), Date.UTC(2027, 2, 15, 4)); // 3월 EDT 복귀
+  // 4시간봉(UTC 0/4/8…)은 EST 자정(05:00Z)과 어긋남 → 04:00Z 봉 시가, approx
+  const C4 = Array.from({ length: 12 }, (_, i) => mk(Date.UTC(2026, 10, 1, 0) + i * 4 * H, 100 + i, 101 + i, 99 + i, 100.5 + i));
+  const td = FC.trueDayOpen(C4, Date.UTC(2026, 10, 2, 10), 4 * H);
+  assert.strictEqual(td.t, Date.UTC(2026, 10, 2, 5)); assert.strictEqual(td.barT, Date.UTC(2026, 10, 2, 4)); assert.strictEqual(td.approx, true);
+  near(td.o, 107); // i=7 (11/01 00Z + 28h)
+});
+
 console.log(`\n${pass} tests passed`);

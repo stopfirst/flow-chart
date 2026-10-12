@@ -181,6 +181,8 @@
     const ob = shift(FC.findOB(full)).filter(z => z.end == null && z.i0 >= -WARMUP);
     const sessions = FC.sessionLevels(lvl15, now);
     const pd = FC.prevDayLevels(lvl15, now);
+    // TDO: 15분봉은 뉴욕 자정에 항상 정렬 → 정확. 없으면 현재 타임프레임 봉(자정을 품은 봉, 'TDO≈')
+    const tdo = FC.trueDayOpen(lvl15, now, 15 * 60e3) || FC.trueDayOpen(full, now, T.ms);
 
     /* ---------- 사이드 패널 ---------- */
     const panels = [];
@@ -285,7 +287,7 @@
     panels.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
     if (!mock && !settings.caKey) warnings.push('Coinalyze 키 미설정: Coinbase·HL CVD는 근사치, 합산 청산은 숨김');
 
-    return { sym, tf, tfLabel: T.label, tfMs: T.ms, candles, times, emas: E, fvg, ob, sessions, pd, panels, src, warnings, fetchedAt: now, status };
+    return { sym, tf, tfLabel: T.label, tfMs: T.ms, candles, times, emas: E, fvg, ob, sessions, pd, tdo, panels, src, warnings, fetchedAt: now, status };
   }
 
   self.FCData = { loadAll, TF, PANEL_META, pickLiqSymbols };

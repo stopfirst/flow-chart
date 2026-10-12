@@ -121,7 +121,33 @@
     let h = -Infinity, l = Infinity, n = 0;
     for (const c of candles) if (c.t >= yStart && c.t < todayStart) { h = Math.max(h, c.h); l = Math.min(l, c.l); n++; }
     if (!n) return null;
-    return { pdh: h, pdl: l, start: yStart, end: todayStart };
+    return { pdh: h, pdl: l, mid: (h + l) / 2, start: yStart, end: todayStart };
+  }
+
+  /* ---------- TDO (True Day Open = 뉴욕 00:00 시가) ----------
+   * nyMidnight(ms): ms 이하의 가장 최근 뉴욕 자정(America/New_York, DST 자동 반영).
+   *   EDT(UTC−4) → 04:00 UTC = KST 13:00, EST(UTC−5) → 05:00 UTC = KST 14:00. */
+  function nyMidnight(ms) {
+    const p = tzParts(ms, 'America/New_York');
+    let t = ms - ((p.hour * 60 + p.minute) * 60 + p.second) * 1000 - (((ms % 1000) + 1000) % 1000);
+    // DST 전환일 보정: 그 시각이 실제로 뉴욕 00:00이 될 때까지 ±1시간
+    for (let k = 0; k < 3; k++) {
+      const q = tzParts(t, 'America/New_York');
+      if (q.hour === 0 && q.minute === 0) break;
+      t += (q.hour >= 12 ? 1 : -1) * 3600e3;
+    }
+    return t > ms ? nyMidnight(t - 1) : t;
+  }
+  /* trueDayOpen: 뉴욕 자정을 포함하는 봉의 시가.
+   * 봉 시작이 자정과 정확히 같으면 approx=false, 자정을 품은 봉(예: EST 기간 4시간봉)이면 approx=true.
+   * 반환 {t(뉴욕 자정 ms), barT(그 봉 시작), o, approx} · 데이터에 없으면 null */
+  function trueDayOpen(candles, nowMs, tfMs) {
+    if (!candles || !candles.length) return null;
+    const now = nowMs ?? candles[candles.length - 1].t;
+    const tf = tfMs ?? (candles.length > 1 ? candles[1].t - candles[0].t : 0);
+    const t0 = nyMidnight(now);
+    for (const c of candles) if (c.t <= t0 && t0 < c.t + tf) return { t: t0, barT: c.t, o: c.o, approx: c.t !== t0 };
+    return null;
   }
 
   /* ---------- CVD ----------
@@ -266,5 +292,5 @@
   }
 
   return { ema, atr, tzParts, kstParts, fmtKstAxis, fmtKstStamp, SESSIONS, sessionOf, sessionLevels,
-    prevDayLevels, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, alignTo, resample, fmtBig, fmtPrice };
+    prevDayLevels, nyMidnight, trueDayOpen, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, alignTo, resample, fmtBig, fmtPrice };
 });

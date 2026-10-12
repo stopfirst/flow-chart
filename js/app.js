@@ -14,8 +14,8 @@
   const MOCK = qs.get('mock') === '1';
 
   // 차트 레이어 표시 토글 (기본 모두 켬)
-  const LAYERS = [{ k: 'sess', t: '세션' }, { k: 'pd', t: 'PDH·PDL' }, { k: 'ob', t: 'OB' }, { k: 'fvg', t: 'FVG' }];
-  const layers = Object.assign({ sess: true, pd: true, ob: true, fvg: true }, JSON.parse(localStorage.getItem('fc_layers_v1') || '{}'));
+  const LAYERS = [{ k: 'sess', t: '세션' }, { k: 'pd', t: 'PDH·PDL' }, { k: 'tdo', t: 'TDO' }, { k: 'ob', t: 'OB' }, { k: 'fvg', t: 'FVG' }];
+  const layers = Object.assign({ sess: true, pd: true, tdo: true, ob: true, fvg: true }, JSON.parse(localStorage.getItem('fc_layers_v1') || '{}'));
   function renderLayers() {
     $('layers').innerHTML = LAYERS.map(l => `<button type="button" data-k="${l.k}" aria-pressed="${layers[l.k] ? 'true' : 'false'}" class="${layers[l.k] ? 'on' : ''}">${l.t}</button>`).join('');
   }
@@ -34,7 +34,7 @@
 
   /* ---------- 헤더 ---------- */
   function legendHTML(items, dot) {
-    return items.map(it => `<span style="color:${it.col}"><i class="${dot ? 'dot' : ''}"></i>${it.text}</span>`).join('');
+    return items.map(it => `<span style="color:${it.col}"><i class="${dot && !it.solid ? 'dot' : ''}"></i>${it.text}</span>`).join('');
   }
 
   /* ---------- 레이아웃 + 그리기 ---------- */
@@ -90,6 +90,8 @@
     const k = (h) => String((h - off + 48) % 24).padStart(2, '0');
     return `KST ${k(20)}–${k(24)} · ${k(2)}–${k(5)} · ${k(7)}–${k(10)}`;
   }
+  // TDO(뉴욕 00:00)의 KST 시각 (EDT 13:00 / EST 14:00)
+  const tdoKst = (t) => { const p = FC.kstParts(t ?? FC.nyMidnight(Date.now())); return String(p.hour).padStart(2, '0') + ':' + String(p.minute).padStart(2, '0'); };
 
   /* ---------- 로드 ---------- */
   let goodFoot = '';
@@ -105,7 +107,8 @@
       document.title = `${D.sym} ${D.tfLabel} · 플로우 차트`;
       const approx = D.panels.filter(p => p.approx).map(p => p.title.replace(' (근사)', ''));
       goodFoot = [
-        `가격: ${D.src} · 세션(ICT 킬존, 뉴욕시간): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 (${sessKst()}) · 각 세션의 가장 최근 회차(진행 중이면 '진행중') · 전일 = UTC 일봉(KST 09시 기준)`,
+        `가격: ${D.src} · 세션(ICT 킬존, 뉴욕시간): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 (${sessKst()}) · 각 세션의 가장 최근 회차(진행 중이면 '진행중') · 전일 = UTC 일봉(KST 09시 기준), MID = (PDH+PDL)/2`,
+        `TDO(True Day Open) = 뉴욕 00:00 봉 시가 (KST ${tdoKst(D.tdo && D.tdo.t)}${tdoKst(D.tdo && D.tdo.t) === '13:00' ? ' · EST 기간 14:00' : ' · EDT 기간 13:00'})${D.tdo && D.tdo.approx ? ' · TDO≈: 해당 시각을 품은 봉의 시가' : ''}`,
         approx.length ? `근사: ${approx.join(', ')} (캔들 방향 × 거래대금)` : '',
         ...D.warnings.map(w => `<span class="warn">⚠ ${w}</span>`),
       ].filter(Boolean).join('<br>');
