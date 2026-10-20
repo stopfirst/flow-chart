@@ -7,10 +7,11 @@
     up: '#5aa889', down: '#c8607e', grid: '#efeff2', axis: '#8a8f99', text: '#3b3f46',
     ema: { 20: '#2f86a6', 50: '#9a5fb0', 100: '#d08a3a', 200: '#4a5fb8' },
     asia: '#5b7fc7', london: '#3f9a6e', ny: '#d08a3a', pd: '#9aa0aa', mid: '#b8862f', tdo: '#d0688c',
+    bbBull: '#3f7f5f', bbBear: '#b04a6a',
   };
   const SESSION_COL = { asia: COL.asia, london: COL.london, ny: COL.ny };
   const hexRgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16)).join(',');
-  const RGB = { asia: hexRgb(COL.asia), london: hexRgb(COL.london), ny: hexRgb(COL.ny), pd: '128,134,146', mid: hexRgb(COL.mid), tdo: hexRgb(COL.tdo), bull: '80,160,125', bear: '200,96,126' };
+  const RGB = { asia: hexRgb(COL.asia), london: hexRgb(COL.london), ny: hexRgb(COL.ny), pd: '128,134,146', mid: hexRgb(COL.mid), tdo: hexRgb(COL.tdo), bull: '80,160,125', bear: '200,96,126', bbBull: hexRgb(COL.bbBull), bbBear: hexRgb(COL.bbBear) };
 
   function xLabelIdx(n) { return [Math.round(n * 0.08), Math.round(n * 0.5), Math.round(n * 0.92) - 1].map(i => Math.max(0, Math.min(n - 1, i))); }
 
@@ -42,7 +43,7 @@
     ctx.fillStyle = COL.text; ctx.font = `${fs + 1}px ${FONT}`; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
     ctx.fillText('가격·ICT', 4, 2);
     const narrow = !!opt.narrow;
-    const show = Object.assign({ sess: true, pd: true, ob: true, fvg: true, tdo: true }, opt.show || {});
+    const show = Object.assign({ sess: true, pd: true, ob: true, fvg: true, tdo: true, bbfvg: true }, opt.show || {});
     const T = 26, B = 24, L = narrow ? 50 : 58;
     const lastC = C[n - 1].c, ref = Math.abs(lastC);
 
@@ -64,6 +65,7 @@
       levels.push({ v: s.h, name: nm + ' H', key: k, sess: s });
       levels.push({ v: s.l, name: nm + ' L', key: k, sess: s });
     }
+    if (show.bbfvg) for (const z of (D.bbfvg || []).filter(z => z.end == null).sort((a, b) => Math.abs(a.mid - lastC) - Math.abs(b.mid - lastC)).slice(0, 1)) for (const v of [z.top, z.bottom]) levels.push({ v, rangeOnly: true }); // 가장 가까운 1개만 y범위에 반영
     for (const lv of levels) if (lv.v > hi && lv.v - hi < rng * 0.35) hi = lv.v; else if (lv.v < lo && lo - lv.v < rng * 0.35) lo = lv.v;
     const pad = (hi - lo) * 0.04; lo -= pad; hi += pad;
     const inR = (v) => v >= lo && v <= hi;
@@ -78,13 +80,20 @@
       ...live.filter(z => z.top < lastC).sort((a, b) => b.top - a.top).slice(0, NOB),
     ].filter(z => inR(z.top) || inR(z.bottom) || (z.top > hi && z.bottom < lo));
 
+    // BB+FVG: 무효화되지 않은 것 중 현재가에 가까운 최대 2개 (화면 가격 범위 안)
+    const bbs = !show.bbfvg ? [] : (D.bbfvg || []).filter(z => z.end == null)
+      .filter(z => inR(z.top) || inR(z.bottom) || (z.top > hi && z.bottom < lo))
+      .sort((a, b) => Math.abs(a.mid - lastC) - Math.abs(b.mid - lastC)).slice(0, 2);
+
     // 오른쪽 라벨 텍스트 → 폭 측정 → 오른쪽 여백(R) 결정
     const fmtLv = (v) => { const d = ref >= 10000 ? 0 : ref >= 100 ? 1 : ref >= 1 ? 3 : 5; return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }); };
     const lfs = narrow ? fs - 1.5 : fs - 1;
     ctx.font = `${lfs}px ${FONT}`;
     const labels = [];
-    for (const lv of levels) if (inR(lv.v)) labels.push({ v: lv.v, text: `${lv.name} ${fmtLv(lv.v)}`, key: lv.key });
-    for (const z of obs) labels.push({ v: (z.top + z.bottom) / 2, text: 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
+    for (const lv of levels) if (!lv.rangeOnly && inR(lv.v)) labels.push({ v: lv.v, text: `${lv.name} ${fmtLv(lv.v)}`, key: lv.key });
+    const visMid = (z) => (Math.min(z.top, hi) + Math.max(z.bottom, lo)) / 2; // 화면에 보이는 부분의 중앙
+    for (const z of obs) labels.push({ v: visMid(z), text: 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
+    for (const z of bbs) labels.push({ v: visMid(z), text: narrow ? 'BB+FVG' : `BB+FVG ${fmtLv(z.mid)}`, rgbs: z.dir === 'bull' ? RGB.bbBull : RGB.bbBear, ob: true });
     const maxW = Math.max(0, ...labels.map(lb => ctx.measureText(lb.text).width));
     const R = Math.round(Math.max(narrow ? 40 : 56, Math.min(W * (narrow ? 0.36 : 0.26), maxW + 18)));
     const pw = W - L - R, ph = H - T - B;
@@ -122,6 +131,15 @@
       const c = z.dir === 'bull' ? RGB.bull : RGB.bear;
       ctx.fillStyle = `rgba(${c},0.13)`; ctx.fillRect(xa, ya, xb - xa, yb - ya);
       ctx.strokeStyle = `rgba(${c},0.75)`; ctx.lineWidth = 1; ctx.strokeRect(xa + 0.5, ya + 0.5, xb - xa - 1, yb - ya - 1);
+    }
+    // BB+FVG (OB/FVG 위): 연한 채움 + 진한 실선 테두리, FVG 가운데 봉부터 오른쪽 끝까지
+    for (const z of bbs) {
+      const xa = Math.max(L, X(z.i0) - step / 2), xb = L + pw;
+      const ya = Y(z.top), yb = Y(z.bottom), hgt = Math.max(2, yb - ya), yy = hgt > yb - ya ? (ya + yb) / 2 - 1 : ya;
+      const bull = z.dir === 'bull';
+      ctx.fillStyle = bull ? '#dcefe3' : '#f8e1e9'; ctx.fillRect(xa, yy, xb - xa, hgt); // 불투명: 아래 OB/FVG 테두리를 가림
+      ctx.strokeStyle = bull ? COL.bbBull : COL.bbBear; ctx.lineWidth = 1.25; ctx.setLineDash([]);
+      ctx.strokeRect(Math.round(xa) + 0.5, Math.round(yy) + 0.5, Math.round(xb - xa) - 1, Math.max(1, Math.round(hgt) - 1));
     }
     // 전일 고저: 회색 파선, 화면 전체 폭
     if (show.pd && D.pd) for (const v of [D.pd.pdh, D.pd.pdl]) {
@@ -195,7 +213,7 @@
     // 오른쪽 라벨: 겹치면 펼치고, 실제 레벨까지 짧은 지시선(leader)을 그림
     const gap = lfs + 3;
     for (const lb of labels) lb.y = Y(lb.v);
-    FC.layoutLabels(labels, gap, T - 8 + gap / 2, H - gap / 2 - 2);
+    FC.layoutLabels(labels, gap, T - 8 + gap / 2, T + ph); // x축 날짜 라벨과 겹치지 않게 플롯 하단까지
     ctx.font = `${lfs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     const x0l = L + pw;
     for (const lb of labels) {
@@ -298,14 +316,18 @@
     return items;
   }
   const LEVEL_LEGEND = [{ text: '아시아 H/L', col: COL.asia, k: 'sess' }, { text: '런던 H/L', col: COL.london, k: 'sess' }, { text: '뉴욕 H/L', col: COL.ny, k: 'sess' }, { text: '전일 H/L', col: COL.pd, k: 'pd' },
-    { text: '전일 MID', col: COL.mid, k: 'pd', solid: true }, { text: 'TDO', col: COL.tdo, k: 'tdo', solid: true }];
+    { text: '전일 MID', col: COL.mid, k: 'pd', solid: true }, { text: 'TDO', col: COL.tdo, k: 'tdo', solid: true },
+    { text: 'BB+FVG', col: COL.bbBull, k: 'bbfvg', box: true }];
   const levelLegend = (show) => LEVEL_LEGEND.filter(it => !show || show[it.k] !== false);
 
   function drawLegendRow(ctx, x, y, items, dotted, fs) {
     ctx.font = `${fs}px ${FONT}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
     for (const it of items) {
-      ctx.strokeStyle = it.col; ctx.lineWidth = 1.6; ctx.setLineDash(dotted && !it.solid ? [4, 3] : []);
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 12, y); ctx.stroke(); ctx.setLineDash([]);
+      if (it.box) { ctx.fillStyle = 'rgba(198,232,212,0.8)'; ctx.fillRect(x, y - 4, 12, 8); ctx.strokeStyle = it.col; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y - 3.5, 11, 7); }
+      else {
+        ctx.strokeStyle = it.col; ctx.lineWidth = 1.6; ctx.setLineDash(dotted && !it.solid ? [4, 3] : []);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 12, y); ctx.stroke(); ctx.setLineDash([]);
+      }
       ctx.fillStyle = it.col; ctx.fillText(it.text, x + 16, y); x += 16 + ctx.measureText(it.text).width + 12;
     }
   }

@@ -14,8 +14,8 @@
   const MOCK = qs.get('mock') === '1';
 
   // 차트 레이어 표시 토글 (기본 모두 켬)
-  const LAYERS = [{ k: 'sess', t: '세션' }, { k: 'pd', t: 'PDH·PDL' }, { k: 'tdo', t: 'TDO' }, { k: 'ob', t: 'OB' }, { k: 'fvg', t: 'FVG' }];
-  const layers = Object.assign({ sess: true, pd: true, tdo: true, ob: true, fvg: true }, JSON.parse(localStorage.getItem('fc_layers_v1') || '{}'));
+  const LAYERS = [{ k: 'sess', t: '세션' }, { k: 'pd', t: 'PDH·PDL' }, { k: 'tdo', t: 'TDO' }, { k: 'ob', t: 'OB' }, { k: 'fvg', t: 'FVG' }, { k: 'bbfvg', t: 'BB+FVG' }];
+  const layers = Object.assign({ sess: true, pd: true, tdo: true, ob: true, fvg: true, bbfvg: true }, JSON.parse(localStorage.getItem('fc_layers_v1') || '{}'));
   function renderLayers() {
     $('layers').innerHTML = LAYERS.map(l => `<button type="button" data-k="${l.k}" aria-pressed="${layers[l.k] ? 'true' : 'false'}" class="${layers[l.k] ? 'on' : ''}">${l.t}</button>`).join('');
   }
@@ -34,7 +34,7 @@
 
   /* ---------- 헤더 ---------- */
   function legendHTML(items, dot) {
-    return items.map(it => `<span style="color:${it.col}"><i class="${dot && !it.solid ? 'dot' : ''}"></i>${it.text}</span>`).join('');
+    return items.map(it => `<span style="color:${it.col}"><i class="${it.box ? 'box' : dot && !it.solid ? 'dot' : ''}"></i>${it.text}</span>`).join('');
   }
 
   /* ---------- 레이아웃 + 그리기 ---------- */
@@ -109,6 +109,7 @@
       goodFoot = [
         `가격: ${D.src} · 세션(ICT 킬존, 뉴욕시간): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 (${sessKst()}) · 각 세션의 가장 최근 회차(진행 중이면 '진행중') · 전일 = UTC 일봉(KST 09시 기준), MID = (PDH+PDL)/2`,
         `TDO(True Day Open) = 뉴욕 00:00 봉 시가 (KST ${tdoKst(D.tdo && D.tdo.t)}${tdoKst(D.tdo && D.tdo.t) === '13:00' ? ' · EST 기간 14:00' : ' · EDT 기간 13:00'})${D.tdo && D.tdo.approx ? ' · TDO≈: 해당 시각을 품은 봉의 시가' : ''}`,
+        `BB+FVG(브레이커+FVG 겹침) = 실패한 OB(종가로 반대편 돌파 → 방향 반전)의 몸통 ∩ 그 돌파 변위의 같은 방향 FVG · 종가가 구간 반대편을 넘으면 삭제 · 현재가에 가까운 최대 2개`,
         approx.length ? `근사: ${approx.join(', ')} (캔들 방향 × 거래대금)` : '',
         ...D.warnings.map(w => `<span class="warn">⚠ ${w}</span>`),
       ].filter(Boolean).join('<br>');

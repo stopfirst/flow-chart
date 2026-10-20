@@ -178,7 +178,10 @@
     const E = {}; for (const k in emas) E[k] = emas[k].slice(cut);
     const shift = (arr) => arr.map(z => ({ ...z, i0: z.i0 - cut, end: z.end == null ? null : z.end - cut, created: z.created != null ? z.created - cut : undefined }));
     const fvg = shift(FC.findFVG(full)).filter(z => (z.end == null || z.end >= 0) && z.i0 >= -20);
-    const ob = shift(FC.findOB(full)).filter(z => z.end == null && z.i0 >= -WARMUP);
+    const obAll = FC.findOB(full), fvgAll = FC.findFVG(full);
+    const ob = shift(obAll).filter(z => z.end == null && z.i0 >= -WARMUP);
+    // BB+FVG: 무효화되지 않은 것만 (표시 개수·거리 선택은 render.js)
+    const bbfvg = shift(FC.findBBFVG(full, { ob: obAll, fvg: fvgAll })).map(z => ({ ...z, obI: z.obI - cut, obStart: z.obStart - cut, brk: z.brk - cut, fvgI: z.fvgI - cut, touched: z.touched == null ? null : z.touched - cut })).filter(z => z.end == null && z.i0 >= -WARMUP);
     const sessions = FC.sessionLevels(lvl15, now);
     const pd = FC.prevDayLevels(lvl15, now);
     // TDO: 15분봉은 뉴욕 자정에 항상 정렬 → 정확. 없으면 현재 타임프레임 봉(자정을 품은 봉, 'TDO≈')
@@ -287,7 +290,7 @@
     panels.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
     if (!mock && !settings.caKey) warnings.push('Coinalyze 키 미설정: Coinbase·HL CVD는 근사치, 합산 청산은 숨김');
 
-    return { sym, tf, tfLabel: T.label, tfMs: T.ms, candles, times, emas: E, fvg, ob, sessions, pd, tdo, panels, src, warnings, fetchedAt: now, status };
+    return { sym, tf, tfLabel: T.label, tfMs: T.ms, candles, times, emas: E, fvg, ob, bbfvg, sessions, pd, tdo, panels, src, warnings, fetchedAt: now, status };
   }
 
   self.FCData = { loadAll, TF, PANEL_META, pickLiqSymbols };

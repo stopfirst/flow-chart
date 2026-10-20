@@ -228,6 +228,53 @@
   }
 
 
+  /* ---------- BB+FVG (브레이커 블록 + FVG 겹침, 일명 Unicorn) ----------
+   * 1) 브레이커: 실패한 OB. findOB의 OB가 종가로 반대편 돌파되면(=OB 무효화 봉 brk) 방향이 뒤집혀 브레이커가 됨.
+   *    약세 OB(하락 직전 양봉) → 이후 종가 > 고가 ⇒ 강세 브레이커 / 강세 OB(상승 직전 음봉) → 종가 < 저가 ⇒ 약세 브레이커
+   *    브레이커 구간 = 그 OB 봉의 몸통 [min(시가,종가), max(시가,종가)] (opts.wicks=true면 꼬리 포함 고가~저가)
+ *    OB 봉 바로 앞에 같은 색 봉이 이어지면 그 묶음(최대 3개, opts.maxRun) 몸통 전체를 구간으로 봄 (ICT 'series of candles')
+   * 2) 돌파 변위 안의 같은 방향 FVG: 가운데 봉 m이 OB 봉 이후이고 brk−2 ≤ m ≤ brk+N (기본 N=10)
+   * 3) BB+FVG = 브레이커 구간 ∩ FVG 구간 (겹침 > 0일 때만). 한 브레이커당 돌파에 가장 가까운 FVG 1개.
+   * 무효화: FVG 생성 다음 봉부터 종가가 구간 반대편 끝을 넘으면(강세: 종가 < 하단, 약세: 종가 > 상단) end = 그 봉.
+   * 터치(touched): 꼬리가 구간 안쪽 끝에 닿은 첫 봉(강세: 저가 ≤ 상단, 약세: 고가 ≥ 하단) — 표시용, 유지. */
+  function findBBFVG(candles, opts = {}) {
+    const N = opts.n ?? 10, wicks = !!opts.wicks, maxRun = opts.maxRun ?? 3;
+    const obs = opts.ob || findOB(candles, opts);
+    const fvgs = opts.fvg || findFVG(candles, opts);
+    const out = [];
+    for (const ob of obs) {
+      if (ob.end == null) continue;               // 아직 돌파되지 않은 OB → 브레이커 아님
+      const k = ob.i0, brk = ob.end;
+      const dir = ob.dir === 'bear' ? 'bull' : 'bear';
+      // ICT: 같은 색 봉이 연속이면 그 묶음 전체가 OB (최대 maxRun개)
+      const up = (x) => x.c > x.o, same = ob.dir === 'bear' ? up : (x) => x.c < x.o;
+      let s0 = k; while (s0 > 0 && k - s0 + 1 < maxRun && same(candles[s0 - 1])) s0--;
+      let bbTop = -Infinity, bbBottom = Infinity;
+      for (let q = s0; q <= k; q++) { const c = candles[q];
+        bbTop = Math.max(bbTop, wicks ? c.h : Math.max(c.o, c.c)); bbBottom = Math.min(bbBottom, wicks ? c.l : Math.min(c.o, c.c)); }
+      let best = null;
+      for (const g of fvgs) {
+        const m = g.i0 + 1;
+        if (g.dir !== dir || m <= k || m < brk - 2 || m > brk + N) continue;
+        const top = Math.min(bbTop, g.top), bottom = Math.max(bbBottom, g.bottom);
+        if (top - bottom <= 0) continue;
+        if (!best || Math.abs(m - brk) < Math.abs(best.m - brk)) best = { g, m, top, bottom };
+      }
+      if (!best) continue;
+      const z = { dir, top: best.top, bottom: best.bottom, mid: (best.top + best.bottom) / 2,
+        obI: k, obStart: s0, brk, fvgI: best.m, i0: best.m, created: best.g.created,
+        bbTop, bbBottom, fvgTop: best.g.top, fvgBottom: best.g.bottom, end: null, touched: null };
+      for (let j = Math.max(best.g.created, brk) + 1; j < candles.length; j++) {
+        const x = candles[j];
+        if (z.touched == null && ((dir === 'bull' && x.l <= z.top) || (dir === 'bear' && x.h >= z.bottom))) z.touched = j;
+        if ((dir === 'bull' && x.c < z.bottom) || (dir === 'bear' && x.c > z.top)) { z.end = j; break; }
+      }
+      out.push(z);
+    }
+    return out;
+  }
+
+
   /* ---------- 오른쪽 라벨 겹침 방지 ----------
    * items: [{y, ...}] (y = 실제 레벨의 화면 y). 각 라벨에 ly(표시 y)를 넣어 돌려줍니다.
    * 위→아래 순서를 유지하면서 최소 간격 gap을 보장하고 [top, bottom] 안에 머물게 합니다.
@@ -292,5 +339,5 @@
   }
 
   return { ema, atr, tzParts, kstParts, fmtKstAxis, fmtKstStamp, SESSIONS, sessionOf, sessionLevels,
-    prevDayLevels, nyMidnight, trueDayOpen, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, alignTo, resample, fmtBig, fmtPrice };
+    prevDayLevels, nyMidnight, trueDayOpen, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, findBBFVG, alignTo, resample, fmtBig, fmtPrice };
 });

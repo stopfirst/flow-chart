@@ -180,4 +180,53 @@ t('TDO: 뉴욕 자정 DST (EDT 04:00Z → EST 05:00Z, 2026-11-01 전환)', () =>
   near(td.o, 107); // i=7 (11/01 00Z + 28h)
 });
 
+/* ---------- BB+FVG ---------- */
+// 합성 시리즈: 횡보(ATR≈2) → 양봉 OB(100→103) → 급락(약세 OB) → 급등으로 OB 고가 종가 돌파 + 강세 FVG
+function bbSeries(gapLow) {
+  const C = []; let t = 0; const add = (o, h, l, c) => C.push(mk(t++ * H, o, h, l, c));
+  for (let i = 0; i < 20; i++) add(100, 101, 99, 100);  // 0..19 횡보
+  add(100, 103.5, 99.5, 103);   // 20 양봉 = 약세 OB 후보 (몸통 100–103, 꼬리 99.5–103.5)
+  add(103, 103, 96, 96.5);      // 21 음봉 (종가 96.5 < 저가 99.5 → 하락 변위)
+  add(96.5, 97, 94, 94.5);      // 22
+  add(94.5, 95, 93, 94);        // 23
+  add(94, 95, 93.5, 94.8);      // 24
+  add(94.8, 101, 94.6, 100.8);  // 25 a: 고가 101 (FVG 하단)
+  add(100.8, 106, 100.5, 105.8);// 26 m: 가운데 봉, 종가 105.8 > OB 고가 103.5 → 브레이커 (brk = 26)
+  add(105.8, 107, gapLow, 106.5);// 27 b: 저가 = FVG 상단
+  for (let i = 0; i < 4; i++) add(106.5, 107.5, 105.5, 106.8);
+  return C;
+}
+t('BB+FVG: 강세 브레이커 몸통 ∩ 강세 FVG', () => {
+  const C = bbSeries(102);
+  const ob = FC.findOB(C).find(o => o.i0 === 20);
+  assert.ok(ob && ob.dir === 'bear' && ob.end === 26, '약세 OB(20)가 26봉 종가로 돌파되어야 함');
+  const z = FC.findBBFVG(C);
+  assert.strictEqual(z.length, 1);
+  const q = z[0];
+  assert.strictEqual(q.dir, 'bull'); assert.strictEqual(q.obI, 20); assert.strictEqual(q.brk, 26); assert.strictEqual(q.fvgI, 26);
+  near(q.bbBottom, 100); near(q.bbTop, 103);       // OB 몸통
+  near(q.fvgBottom, 101); near(q.fvgTop, 102);     // FVG [고가25, 저가27]
+  near(q.bottom, 101); near(q.top, 102); near(q.mid, 101.5); // 겹침
+  assert.strictEqual(q.end, null);
+  // 꼬리 포함 옵션: 브레이커 99.5–103.5 → 겹침은 여전히 101–102
+  const w = FC.findBBFVG(C, { wicks: true })[0]; near(w.bbBottom, 99.5); near(w.bbTop, 103.5); near(w.top, 102);
+});
+t('BB+FVG: 브레이커와 FVG가 겹치지 않으면 없음', () => {
+  // 몸통(100–103)까지는 갭 없이 겹치며 올라오고, 돌파 봉에서만 몸통 위 갭 [103.8, 104.5]
+  const C = bbSeries(102).slice(0, 25); let t0 = 25; const add = (o, h, l, c) => C.push(mk(t0++ * H, o, h, l, c));
+  add(97, 100, 96.8, 99.5); add(99.5, 103.2, 99.3, 102.8); add(102.8, 103.8, 99.8, 103.4);
+  add(103.4, 106, 103, 105.8);  // 28: 종가 > 103.5 → 브레이커
+  add(105.8, 107, 104.5, 106.5); for (let i = 0; i < 3; i++) add(106.5, 107.5, 105.5, 106.8);
+  assert.ok(FC.findOB(C).some(o => o.i0 === 20 && o.end === 28), '브레이커 자체는 생겨야 함');
+  assert.ok(FC.findFVG(C).some(g => g.dir === 'bull' && g.i0 === 27 && g.bottom === 103.8), '강세 FVG 자체는 생겨야 함');
+  assert.strictEqual(FC.findBBFVG(C).filter(q => q.obI === 20).length, 0);
+});
+t('BB+FVG: 종가가 하단 아래면 무효화, 꼬리 터치는 유지', () => {
+  const C = bbSeries(102);
+  C[28] = mk(28 * H, 106.5, 106.6, 101.5, 104);  // 꼬리로 구간(101–102) 터치, 종가는 위
+  let q = FC.findBBFVG(C)[0]; assert.strictEqual(q.touched, 28); assert.strictEqual(q.end, null);
+  C[30] = mk(30 * H, 104, 104.2, 99, 100.5);      // 종가 100.5 < 하단 101 → 무효화
+  q = FC.findBBFVG(C)[0]; assert.strictEqual(q.end, 30);
+});
+
 console.log(`\n${pass} tests passed`);
