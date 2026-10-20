@@ -262,7 +262,7 @@
       }
       if (!best) continue;
       const z = { dir, top: best.top, bottom: best.bottom, mid: (best.top + best.bottom) / 2,
-        obI: k, obStart: s0, brk, fvgI: best.m, i0: best.m, created: best.g.created,
+        obI: k, obStart: s0, brk, fvgI: best.m, i0: s0, created: best.g.created,
         bbTop, bbBottom, fvgTop: best.g.top, fvgBottom: best.g.bottom, end: null, touched: null };
       for (let j = Math.max(best.g.created, brk) + 1; j < candles.length; j++) {
         const x = candles[j];
