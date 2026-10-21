@@ -71,7 +71,7 @@
     const inR = (v) => v >= lo && v <= hi;
 
     // OB 표시
-    //  백도식(기본): 방향별로 가장 최근(OB 봉이 가장 늦은) 유효 OB 1개씩 → 화면 가격 범위 안에 있을 때만 (최대 강세 1 + 약세 1)
+    //  백도식(기본): 방향별로 가장 최근(OB 봉이 가장 늦은) 유효 OB 1개씩 → OB 봉이 화면 안 + 화면 가격 범위 안일 때만 (최대 강세 1 + 약세 1)
     //  넓게(이전 방식): 살아있는 OB 중 현재가 위 2개 / 아래 2개(가까운 순) + 현재가를 품은 OB 1개
     const live = (D.ob || []).filter(z => z.end == null);
     const visOB = (z) => inR(z.top) || inR(z.bottom) || (z.top > hi && z.bottom < lo);
@@ -80,7 +80,7 @@
     if (show.ob && baekdo) {
       for (const dir of ['bull', 'bear']) {
         const z = live.filter(q => q.dir === dir).sort((a, b) => b.i0 - a.i0 || b.created - a.created)[0];
-        if (z && visOB(z)) obs.push(z);
+        if (z && z.i0 >= 0 && visOB(z)) obs.push(z); // OB 봉이 화면 안에 있을 때만 (박스는 그 봉에서 시작)
       }
     } else if (show.ob) {
       const NOB = 2;
