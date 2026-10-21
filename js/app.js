@@ -6,8 +6,9 @@
   const qs = new URLSearchParams(location.search);
   const LS = 'fc_settings_v1';
 
-  const settings = Object.assign({ caKey: '', caProxy: '', label: 'STOPFIRST' }, JSON.parse(localStorage.getItem(LS) || '{}'));
+  const settings = Object.assign({ caKey: '', caProxy: '', label: 'STOPFIRST', obMode: 'baekdo' }, JSON.parse(localStorage.getItem(LS) || '{}'));
   const state = Object.assign({ sym: 'BTC', tf: '1h', bars: 100, auto: 0 }, JSON.parse(localStorage.getItem('fc_state_v1') || '{}'));
+  FC.setOBMode(settings.obMode); // OB 방식: 백도식(기본) / 넓게(이전 방식)
   if (qs.get('s')) state.sym = qs.get('s');
   if (qs.get('tf') && DATA.TF[qs.get('tf')]) state.tf = qs.get('tf');
   if (qs.get('bars')) state.bars = +qs.get('bars');
@@ -95,6 +96,18 @@
 
   /* ---------- 로드 ---------- */
   let goodFoot = '';
+  function renderFoot() {
+    const approx = D.panels.filter(p => p.approx).map(p => p.title.replace(' (근사)', ''));
+    goodFoot = [
+      `가격: ${D.src} · 세션(ICT 킬존, 뉴욕시간): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 (${sessKst()}) · 각 세션의 가장 최근 회차(진행 중이면 '진행중') · 전일 = UTC 일봉(KST 09시 기준), MID = (PDH+PDL)/2`,
+      `TDO(True Day Open) = 뉴욕 00:00 봉 시가 (KST ${tdoKst(D.tdo && D.tdo.t)}${tdoKst(D.tdo && D.tdo.t) === '13:00' ? ' · EST 기간 14:00' : ' · EDT 기간 13:00'})${D.tdo && D.tdo.approx ? ' · TDO≈: 해당 시각을 품은 봉의 시가' : ''}`,
+      `BB+FVG(브레이커+FVG 겹침) = 실패한 OB(종가로 반대편 돌파 → 방향 반전)의 몸통 ∩ 그 돌파 변위의 같은 방향 FVG · 종가가 구간 반대편을 넘으면 삭제 · 현재가에 가까운 최대 2개`,
+      approx.length ? `근사: ${approx.join(', ')} (캔들 방향 × 거래대금)` : '',
+      ...(D.notes || []).map(n => `<span class="note">${n}</span>`),
+      ...D.warnings.map(w => `<span class="warn">⚠ ${w}</span>`),
+    ].filter(Boolean).join('<br>');
+    $('foot').innerHTML = goodFoot; // 이전 오류/경고는 여기서 모두 교체
+  }
   async function load() {
     const my = ++seq, want = state.sym; loading = true; $('loading').classList.add('on');
     try {
@@ -105,16 +118,13 @@
       $('stamp').textContent = FC.fmtKstStamp(D.fetchedAt) + (MOCK ? ' · 모의 데이터' : '');
       $('stamp').title = '';
       document.title = `${D.sym} ${D.tfLabel} · 플로우 차트`;
-      const approx = D.panels.filter(p => p.approx).map(p => p.title.replace(' (근사)', ''));
-      goodFoot = [
-        `가격: ${D.src} · 세션(ICT 킬존, 뉴욕시간): 아시아 20–24 · 런던 02–05 · 뉴욕 07–10 (${sessKst()}) · 각 세션의 가장 최근 회차(진행 중이면 '진행중') · 전일 = UTC 일봉(KST 09시 기준), MID = (PDH+PDL)/2`,
-        `TDO(True Day Open) = 뉴욕 00:00 봉 시가 (KST ${tdoKst(D.tdo && D.tdo.t)}${tdoKst(D.tdo && D.tdo.t) === '13:00' ? ' · EST 기간 14:00' : ' · EDT 기간 13:00'})${D.tdo && D.tdo.approx ? ' · TDO≈: 해당 시각을 품은 봉의 시가' : ''}`,
-        `BB+FVG(브레이커+FVG 겹침) = 실패한 OB(종가로 반대편 돌파 → 방향 반전)의 몸통 ∩ 그 돌파 변위의 같은 방향 FVG · 종가가 구간 반대편을 넘으면 삭제 · 현재가에 가까운 최대 2개`,
-        approx.length ? `근사: ${approx.join(', ')} (캔들 방향 × 거래대금)` : '',
-        ...D.warnings.map(w => `<span class="warn">⚠ ${w}</span>`),
-      ].filter(Boolean).join('<br>');
-      $('foot').innerHTML = goodFoot; // 이전 오류/경고는 여기서 모두 교체
+      renderFoot();
       hover = null; layout();
+      // Coinalyze 캐시를 먼저 보여줬으면 백그라운드에서 증분 갱신 후 패널만 교체
+      if (D.caRefresh) {
+        const d0 = D, job = D.caRefresh(); d0.caRefresh = null;
+        job.then(r => { if (my !== seq || D !== d0) return; DATA.applyCa(D, r); renderFoot(); layout(); }).catch(() => {});
+      }
     } catch (e) {
       if (my !== seq) return;
       const same = D && D.sym === want;
@@ -165,11 +175,12 @@
   });
 
   $('gear').addEventListener('click', () => {
-    $('caKey').value = settings.caKey; $('caProxy').value = settings.caProxy; $('label').value = settings.label;
+    $('caKey').value = settings.caKey; $('caProxy').value = settings.caProxy; $('label').value = settings.label; $('obMode').value = settings.obMode === 'wide' ? 'wide' : 'baekdo';
     $('settings').showModal();
   });
   $('saveSettings').addEventListener('click', () => {
     settings.caKey = $('caKey').value.trim(); settings.caProxy = $('caProxy').value.trim(); settings.label = $('label').value.trim() || 'STOPFIRST';
+    settings.obMode = FC.setOBMode($('obMode').value);
     localStorage.setItem(LS, JSON.stringify(settings)); localStorage.removeItem('fc_ca_markets_v1');
     syncControls(); load();
   });

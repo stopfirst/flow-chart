@@ -70,15 +70,27 @@
     const pad = (hi - lo) * 0.04; lo -= pad; hi += pad;
     const inR = (v) => v >= lo && v <= hi;
 
-    // OB: 살아있는 OB 중 현재가 위 2개 / 아래 2개(가까운 순) + 현재가를 품은 OB 1개(중심이 가장 가까운 것)
-    const NOB = 2;
+    // OB 표시
+    //  백도식(기본): 방향별로 가장 최근(OB 봉이 가장 늦은) 유효 OB 1개씩 → 화면 가격 범위 안에 있을 때만 (최대 강세 1 + 약세 1)
+    //  넓게(이전 방식): 살아있는 OB 중 현재가 위 2개 / 아래 2개(가까운 순) + 현재가를 품은 OB 1개
     const live = (D.ob || []).filter(z => z.end == null);
-    const mid = (z) => Math.abs((z.top + z.bottom) / 2 - lastC);
-    const obs = !show.ob ? [] : [
-      ...live.filter(z => z.bottom <= lastC && z.top >= lastC).sort((a, b) => mid(a) - mid(b)).slice(0, 1),
-      ...live.filter(z => z.bottom > lastC).sort((a, b) => a.bottom - b.bottom).slice(0, NOB),
-      ...live.filter(z => z.top < lastC).sort((a, b) => b.top - a.top).slice(0, NOB),
-    ].filter(z => inR(z.top) || inR(z.bottom) || (z.top > hi && z.bottom < lo));
+    const visOB = (z) => inR(z.top) || inR(z.bottom) || (z.top > hi && z.bottom < lo);
+    const baekdo = live.length ? live.every(z => z.mode === 'baekdo') : FC.getOBMode() === 'baekdo';
+    let obs = [];
+    if (show.ob && baekdo) {
+      for (const dir of ['bull', 'bear']) {
+        const z = live.filter(q => q.dir === dir).sort((a, b) => b.i0 - a.i0 || b.created - a.created)[0];
+        if (z && visOB(z)) obs.push(z);
+      }
+    } else if (show.ob) {
+      const NOB = 2;
+      const mid = (z) => Math.abs((z.top + z.bottom) / 2 - lastC);
+      obs = [
+        ...live.filter(z => z.bottom <= lastC && z.top >= lastC).sort((a, b) => mid(a) - mid(b)).slice(0, 1),
+        ...live.filter(z => z.bottom > lastC).sort((a, b) => a.bottom - b.bottom).slice(0, NOB),
+        ...live.filter(z => z.top < lastC).sort((a, b) => b.top - a.top).slice(0, NOB),
+      ].filter(visOB);
+    }
 
     // BB+FVG: 무효화되지 않은 것 중 현재가에 가까운 최대 2개 (화면 가격 범위 안)
     const bbs = !show.bbfvg ? [] : (D.bbfvg || []).filter(z => z.end == null)
@@ -92,7 +104,7 @@
     const labels = [];
     for (const lv of levels) if (!lv.rangeOnly && inR(lv.v)) labels.push({ v: lv.v, text: `${lv.name} ${fmtLv(lv.v)}`, key: lv.key });
     const visMid = (z) => (Math.min(z.top, hi) + Math.max(z.bottom, lo)) / 2; // 화면에 보이는 부분의 중앙
-    for (const z of obs) labels.push({ v: visMid(z), text: 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
+    for (const z of obs) labels.push({ v: visMid(z), text: z.mode === 'baekdo' && !narrow ? `OB ${fmtLv((z.top + z.bottom) / 2)}` : 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
     for (const z of bbs) labels.push({ v: visMid(z), text: narrow ? 'BB+FVG' : `BB+FVG ${fmtLv(z.mid)}`, rgbs: z.dir === 'bull' ? RGB.bbBull : RGB.bbBear, ob: true });
     const maxW = Math.max(0, ...labels.map(lb => ctx.measureText(lb.text).width));
     const R = Math.round(Math.max(narrow ? 40 : 56, Math.min(W * (narrow ? 0.36 : 0.26), maxW + 18)));
@@ -127,7 +139,8 @@
     // OB (실선 박스, 오른쪽 끝까지)
     for (const z of obs) {
       const xa = Math.max(L, X(z.i0) - step / 2), xb = L + pw;
-      const ya = Y(z.top), yb = Y(z.bottom);
+      let ya = Y(z.top), yb = Y(z.bottom);
+      if (yb - ya < 3) { const m = (ya + yb) / 2; ya = m - 1.5; yb = m + 1.5; } // 너무 얇으면 최소 3px
       const c = z.dir === 'bull' ? RGB.bull : RGB.bear;
       ctx.fillStyle = `rgba(${c},0.13)`; ctx.fillRect(xa, ya, xb - xa, yb - ya);
       ctx.strokeStyle = `rgba(${c},0.75)`; ctx.lineWidth = 1; ctx.strokeRect(xa + 0.5, ya + 0.5, xb - xa - 1, yb - ya - 1);

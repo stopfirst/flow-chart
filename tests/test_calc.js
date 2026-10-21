@@ -81,27 +81,27 @@ t('FVG: 약세 갭', () => {
   assert.strictEqual(g.length, 1); near(g[0].top, 99); near(g[0].bottom, 97); assert.strictEqual(g[0].end, null);
 });
 
-t('OB: 강세 OB (음봉 → 변위 돌파) + 무효화', () => {
+t('OB(넓게): 강세 OB (음봉 → 변위 돌파) + 무효화', () => {
   const C = [];
   for (let i = 0; i < 20; i++) C.push(mk(i * H, 100, 100.5, 99.5, 100)); // ATR≈1
   C.push(mk(20 * H, 100, 100.3, 98.8, 99));   // 음봉 j=20, zone [98.8,100.3]
   C.push(mk(21 * H, 99, 101.5, 98.9, 101.2)); // 양봉, 종가 > 100.3 돌파
   C.push(mk(22 * H, 101.2, 102.5, 101, 102.3)); // max high 102.5 − 98.8 = 3.7 ≥ 1.5·ATR
   for (let i = 23; i < 28; i++) C.push(mk(i * H, 102, 102.5, 101.5, 102));
-  let ob = FC.findOB(C).filter(z => z.dir === 'bull');
+  let ob = FC.findOB(C, { mode: 'wide' }).filter(z => z.dir === 'bull');
   assert.strictEqual(ob.length, 1); assert.strictEqual(ob[0].i0, 20); near(ob[0].bottom, 98.8); near(ob[0].top, 100.3); assert.strictEqual(ob[0].end, null);
   C.push(mk(28 * H, 102, 102, 98, 98.5)); // 종가 < 98.8 → 무효
-  ob = FC.findOB(C).filter(z => z.dir === 'bull' && z.i0 === 20);
+  ob = FC.findOB(C, { mode: 'wide' }).filter(z => z.dir === 'bull' && z.i0 === 20);
   assert.strictEqual(ob[0].end, 28); assert.strictEqual(ob[0].touched, 28);
 });
 
-t('OB: 변위 부족이면 미탐지', () => {
+t('OB(넓게): 변위 부족이면 미탐지', () => {
   const C = [];
   for (let i = 0; i < 20; i++) C.push(mk(i * H, 100, 102, 98, 100)); // ATR≈4
   C.push(mk(20 * H, 100, 100.3, 99.5, 99.6));
   C.push(mk(21 * H, 99.6, 100.6, 99.5, 100.5));
   C.push(mk(22 * H, 100.5, 100.8, 100.2, 100.6));
-  assert.strictEqual(FC.findOB(C).filter(z => z.i0 === 20).length, 0);
+  assert.strictEqual(FC.findOB(C, { mode: 'wide' }).filter(z => z.i0 === 20).length, 0);
 });
 
 t('resample 1h→4h, alignTo', () => {
@@ -198,7 +198,7 @@ function bbSeries(gapLow) {
 }
 t('BB+FVG: 강세 브레이커 몸통 ∩ 강세 FVG', () => {
   const C = bbSeries(102);
-  const ob = FC.findOB(C).find(o => o.i0 === 20);
+  const ob = FC.findOB(C, { mode: 'wide' }).find(o => o.i0 === 20);
   assert.ok(ob && ob.dir === 'bear' && ob.end === 26, '약세 OB(20)가 26봉 종가로 돌파되어야 함');
   const z = FC.findBBFVG(C);
   assert.strictEqual(z.length, 1);
@@ -217,7 +217,7 @@ t('BB+FVG: 브레이커와 FVG가 겹치지 않으면 없음', () => {
   add(97, 100, 96.8, 99.5); add(99.5, 103.2, 99.3, 102.8); add(102.8, 103.8, 99.8, 103.4);
   add(103.4, 106, 103, 105.8);  // 28: 종가 > 103.5 → 브레이커
   add(105.8, 107, 104.5, 106.5); for (let i = 0; i < 3; i++) add(106.5, 107.5, 105.5, 106.8);
-  assert.ok(FC.findOB(C).some(o => o.i0 === 20 && o.end === 28), '브레이커 자체는 생겨야 함');
+  assert.ok(FC.findOB(C, { mode: 'wide' }).some(o => o.i0 === 20 && o.end === 28), '브레이커 자체는 생겨야 함');
   assert.ok(FC.findFVG(C).some(g => g.dir === 'bull' && g.i0 === 27 && g.bottom === 103.8), '강세 FVG 자체는 생겨야 함');
   assert.strictEqual(FC.findBBFVG(C).filter(q => q.obI === 20).length, 0);
 });
@@ -227,6 +227,69 @@ t('BB+FVG: 종가가 하단 아래면 무효화, 꼬리 터치는 유지', () =>
   let q = FC.findBBFVG(C)[0]; assert.strictEqual(q.touched, 28); assert.strictEqual(q.end, null);
   C[30] = mk(30 * H, 104, 104.2, 99, 100.5);      // 종가 100.5 < 하단 101 → 무효화
   q = FC.findBBFVG(C)[0]; assert.strictEqual(q.end, 30);
+});
+
+/* ---------- OB 백도식 (BOS 기준) ---------- */
+// 횡보(ATR≈2) → 스윙 고점 103(10봉) → 하락 → 저점 → 작은 음봉(OB) → 큰 양봉으로 103 종가 돌파
+function bosSeries(obCandle) {
+  const C = []; let t = 0; const add = (o, h, l, c) => C.push(mk(t++ * H, o, h, l, c));
+  for (let i = 0; i < 8; i++) add(100, 101, 99, 100);   // 0..7
+  add(100, 102, 99.5, 101.5);  // 8
+  add(101.5, 102.5, 100.5, 102); // 9
+  add(102, 103, 101.5, 102.5); // 10 스윙 고점 103
+  add(102.5, 102.8, 100.5, 101); // 11
+  add(101, 101.5, 98.5, 99);   // 12
+  add(99, 99.5, 96.8, 97.2);   // 13 저점 96.8 (음봉)
+  add(97.2, 98.4, 97, 98.2);   // 14 작은 양봉
+  add(...obCandle);            // 15 OB 후보 (음봉)
+  add(97.6, 101.8, 97.4, 101.6); // 16 큰 양봉
+  add(101.6, 105, 101.4, 104.8); // 17 종가 104.8 > 103 → BOS
+  for (let i = 0; i < 4; i++) add(104.8, 105.5, 104, 105);
+  return C;
+}
+t('OB(백도식): 스윙 고점 종가 돌파 → 직전 마지막 음봉 몸통', () => {
+  const C = bosSeries([98.2, 98.5, 97.3, 97.6]);
+  const sw = FC.swings(C, 2); assert.ok(sw.hi.includes(10), '10봉이 스윙 고점');
+  const ob = FC.findOB(C).filter(z => z.dir === 'bull');  // 기본 = 백도식
+  assert.strictEqual(FC.getOBMode(), 'baekdo');
+  assert.strictEqual(ob.length, 1);
+  const z = ob[0];
+  assert.strictEqual(z.mode, 'baekdo'); assert.strictEqual(z.i0, 15); assert.strictEqual(z.brk, 17); assert.strictEqual(z.swing, 10);
+  near(z.bottom, 97.6); near(z.top, 98.2); assert.strictEqual(z.doji, false); // 몸통만 (꼬리 97.3–98.5 아님)
+  assert.strictEqual(z.end, null); assert.strictEqual(z.touched, null);
+  // 넓게(이전 방식)는 같은 데이터에서 꼬리 전체 구간
+  const w = FC.findOB(C, { mode: 'wide' }).find(q => q.i0 === 15); assert.ok(w); near(w.bottom, 97.3); near(w.top, 98.5);
+  // setOBMode로 기본 바꾸기
+  FC.setOBMode('wide'); assert.strictEqual(FC.findOB(C).every(q => q.mode === 'wide'), true); FC.setOBMode('baekdo');
+});
+t('OB(백도식): 스윙 돌파(BOS)가 없으면 OB 없음', () => {
+  const C = bosSeries([98.2, 98.5, 97.3, 97.6]);
+  C[17] = mk(17 * H, 101.6, 103.4, 101.4, 102.9); // 고가는 103 넘지만 종가 102.9 < 103 → BOS 아님
+  for (let i = 18; i < C.length; i++) C[i] = mk(i * H, 102.9, 103.2, 102.2, 102.6);
+  assert.strictEqual(FC.findOB(C).filter(z => z.dir === 'bull').length, 0);
+  assert.ok(FC.findOB(C, { mode: 'wide' }).some(z => z.dir === 'bull'), '넓게 방식은 후보가 있음(대조)');
+});
+t('OB(백도식): 도지(몸통 < 0.1 ATR)면 아래 꼬리까지', () => {
+  const C = bosSeries([97.65, 98.5, 97.3, 97.6]); // 몸통 0.05
+  const z = FC.findOB(C).find(q => q.dir === 'bull');
+  assert.ok(z && z.i0 === 15 && z.doji === true); near(z.top, 97.65); near(z.bottom, 97.3);
+});
+t('OB(백도식): 종가가 하단 아래면 무효화, 터치는 기록', () => {
+  const C = bosSeries([98.2, 98.5, 97.3, 97.6]);
+  C[19] = mk(19 * H, 104.8, 104.9, 98, 99);    // 꼬리로 상단 98.2 위… 저가 98 ≤ 98.2 → 터치, 종가 99 > 97.6 유지
+  let z = FC.findOB(C).find(q => q.dir === 'bull'); assert.strictEqual(z.touched, 19); assert.strictEqual(z.end, null);
+  C[20] = mk(20 * H, 99, 99.2, 96.5, 97);      // 종가 97 < 97.6 → 무효
+  z = FC.findOB(C).find(q => q.dir === 'bull'); assert.strictEqual(z.end, 20);
+});
+t('OB(백도식): 약세 대칭 (스윙 저점 종가 하향 돌파 → 직전 마지막 양봉 몸통)', () => {
+  const C = bosSeries([98.2, 98.5, 97.3, 97.6]).map(c => mk(c.t, 200 - c.o, 200 - c.l, 200 - c.h, 200 - c.c)); // 가격 반전
+  const z = FC.findOB(C).filter(q => q.dir === 'bear');
+  assert.strictEqual(z.length, 1); assert.strictEqual(z[0].i0, 15); near(z[0].bottom, 101.8); near(z[0].top, 102.4);
+});
+t('BB+FVG는 백도식 OB를 받아도 넓은 후보로 계산(결과 동일)', () => {
+  const C = bbSeries(102);
+  const a = FC.findBBFVG(C), b = FC.findBBFVG(C, { ob: FC.findOB(C) }), c = FC.findBBFVG(C, { ob: FC.findOB(C, { mode: 'wide' }) });
+  assert.deepStrictEqual(a, b); assert.deepStrictEqual(a, c); assert.strictEqual(a.length, 1);
 });
 
 console.log(`\n${pass} tests passed`);

@@ -39,13 +39,14 @@ button, select, input { font: inherit; font-size: 13px; color: var(--fg); }
 .loading.on { display: flex; }
 .foot { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.5; }
 .foot .warn { color: #b06a3a; }
+.foot .note { color: #a3a8b0; }
 
 dialog { border: 1px solid var(--line); border-radius: 12px; padding: 18px; width: min(440px, 92vw); }
 dialog::backdrop { background: rgba(0,0,0,.25); }
 dialog h3 { margin: 0 0 12px; }
 dialog label { display: block; font-size: 13px; margin-bottom: 12px; }
 dialog label small { color: var(--muted); }
-dialog input { width: 100%; height: 36px; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
+dialog input, dialog select { width: 100%; height: 36px; margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
 dialog .row { display: flex; justify-content: flex-end; gap: 8px; }
 dialog button { height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
 dialog button.primary { background: #3b3f46; color: #fff; border-color: #3b3f46; }

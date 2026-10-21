@@ -65,26 +65,33 @@
     return out.filter((x, i) => i === 0 || x.t !== out[i - 1].t);
   }
 
-  /* ---------- Coinalyze ---------- */
+  /* ---------- Coinalyze (호출은 모두 ca.js 클라이언트 경유: 스로틀·429 백오프·캐시) ---------- */
+  const CA = self.FCCA.createClient({ fetchJSON: (url) => getJSON(url) });
+  const MK_KEY = 'fc_ca_markets_v1';
   function caBase(settings) { return (settings.caProxy || 'https://api.coinalyze.net/v1').replace(/\/$/, ''); }
-  async function caGet(settings, path, params) {
-    const qs = new URLSearchParams(params || {});
-    if (settings.caKey) qs.set('api_key', settings.caKey); // 쿼리 파라미터 → 사전요청(preflight) 없는 단순 GET
-    return getJSON(caBase(settings) + path + (qs.toString() ? '?' + qs : ''));
+  function caMarketsCached(settings, maxAgeMs) {
+    try {
+      const c = JSON.parse(localStorage.getItem(MK_KEY) || 'null');
+      if (c && c.base === caBase(settings) && (maxAgeMs == null || Date.now() - c.t < maxAgeMs)) return c;
+    } catch (e) { /* ignore */ }
+    return null;
   }
   async function caMarkets(settings) {
-    const ck = 'fc_ca_markets_v1';
+    const hit = caMarketsCached(settings, 24 * 3600e3);
+    if (hit) return hit;
     try {
-      const c = JSON.parse(localStorage.getItem(ck) || 'null');
-      if (c && Date.now() - c.t < 24 * 3600e3 && c.base === caBase(settings)) return c;
-    } catch (e) { /* ignore */ }
-    const [exchanges, future, spot] = await Promise.all([
-      caGet(settings, '/exchanges'), caGet(settings, '/future-markets'), caGet(settings, '/spot-markets')]);
-    const slim = (m) => ({ symbol: m.symbol, exchange: m.exchange, soe: m.symbol_on_exchange, base: m.base_asset,
-      quote: m.quote_asset, perp: m.is_perpetual, margined: m.margined, bs: m.has_buy_sell_data, den: m.oi_lq_vol_denominated_in });
-    const c = { t: Date.now(), base: caBase(settings), exchanges, future: future.map(slim), spot: spot.map(slim) };
-    try { localStorage.setItem(ck, JSON.stringify(c)); } catch (e) { /* quota */ }
-    return c;
+      const base = caBase(settings), g = (p) => CA.get(base, p, {}, settings.caKey);
+      const exchanges = await g('/exchanges'), future = await g('/future-markets'), spot = await g('/spot-markets'); // 순차(스로틀 큐)
+      const slim = (m) => ({ symbol: m.symbol, exchange: m.exchange, soe: m.symbol_on_exchange, base: m.base_asset,
+        quote: m.quote_asset, perp: m.is_perpetual, margined: m.margined, bs: m.has_buy_sell_data, den: m.oi_lq_vol_denominated_in });
+      const c = { t: Date.now(), base, exchanges, future: future.map(slim), spot: spot.map(slim) };
+      try { localStorage.setItem(MK_KEY, JSON.stringify(c)); } catch (e) { /* quota */ }
+      return c;
+    } catch (e) {
+      const stale = caMarketsCached(settings, null); // 만료된 목록이라도 있으면 사용
+      if (stale) return stale;
+      throw e;
+    }
   }
   const EX_PREF = ['binance', 'bybit', 'okx', 'hyperliquid', 'bitget', 'gate', 'deribit', 'bitmex', 'coinbase', 'kraken', 'htx', 'huobi', 'bitfinex', 'kucoin', 'mexc', 'bingx', 'phemex', 'dydx'];
   function exCode(mk, re) { const e = mk.exchanges.find(x => re.test(x.name)); return e && e.code; }
@@ -100,18 +107,70 @@
     return [...byEx.values()].sort((a, b) => rank(a.exchange) - rank(b.exchange)).slice(0, max).map(m => m.symbol);
   }
 
-  async function caOhlcvCvd(settings, symbol, tf, fromS, toS) {
-    const rows = await caGet(settings, '/ohlcv-history', { symbols: symbol, interval: TF[tf].ca, from: fromS, to: toS });
-    const h = (rows[0] && rows[0].history) || [];
-    return h.map(x => ({ t: x.t * 1000, v: x.v * x.c, bv: x.bv * x.c })); // 기초자산 수량 × 종가 ≈ USD
-  }
-  async function caLiq(settings, symbols, tf, fromS, toS) {
-    const rows = await caGet(settings, '/liquidation-history', { symbols: symbols.join(','), interval: TF[tf].ca, from: fromS, to: toS, convert_to_usd: 'true' });
-    const m = new Map();
-    for (const r of rows) for (const x of r.history || []) {
-      const t = x.t * 1000, a = m.get(t) || { t, l: 0, s: 0 }; a.l += x.l || 0; a.s += x.s || 0; m.set(t, a);
+  /* Coinalyze 데이터 수집: Coinbase 현물 + HL 선물 CVD는 ohlcv-history 1회(심볼 콤마), 청산 1회 → 새로고침당 최대 2회
+   * mode 'cache' = 네트워크 없이 캐시만 (없으면 miss) / 'net' = 신선하면 캐시, 아니면 증분 요청 */
+  async function caFetch(c, mode) {
+    const { settings, sym, tf, isHip, fromS, toS } = c, cacheOnly = mode === 'cache';
+    const out = { miss: false, mkErr: null, cbSym: null, hlSym: null, liqSyms: [], ohlcv: null, ohlcvErr: null, liq: null, liqErr: null };
+    let mk = null;
+    if (cacheOnly) { mk = caMarketsCached(settings, null); if (!mk) { out.miss = true; return out; } }
+    else { try { mk = await caMarkets(settings); } catch (e) { out.mkErr = e; return out; } }
+    if (!isHip) {
+      const cbCode = exCode(mk, /coinbase/i);
+      const m = mk.spot.find(x => x.exchange === cbCode && x.base === sym && /^USD$/.test(x.quote) && x.bs)
+             || mk.spot.find(x => x.exchange === cbCode && x.base === sym && x.bs);
+      if (m) out.cbSym = m.symbol;
     }
-    return [...m.values()].sort((a, b) => a.t - b.t);
+    { const hlCode = exCode(mk, /hyperliquid/i);
+      const m = mk.future.find(x => x.exchange === hlCode && x.perp && matchBase(x, sym) && x.bs);
+      if (m) out.hlSym = m.symbol; }
+    out.liqSyms = pickLiqSymbols(mk, sym);
+    const common = { base: caBase(settings), apiKey: settings.caKey, interval: TF[tf].ca, fromS, toS, tfMs: TF[tf].ms, cacheOnly };
+    const oSyms = [out.cbSym, out.hlSym].filter(Boolean);
+    if (oSyms.length) {
+      try { out.ohlcv = await CA.history({ ...common, path: '/ohlcv-history', symbols: oSyms.join(',') }); if (!out.ohlcv) out.miss = true; }
+      catch (e) { out.ohlcvErr = e; }
+    }
+    if (out.liqSyms.length) {
+      try { out.liq = await CA.history({ ...common, path: '/liquidation-history', symbols: out.liqSyms.join(','), params: { convert_to_usd: 'true' } }); if (!out.liq) out.miss = true; }
+      catch (e) { out.liqErr = e; }
+    }
+    return out;
+  }
+  const isStale = (r) => !!(r && r.state === 'stale');
+  // → {panels, warnings, notes, done:{cbs, hl}}
+  function caBuild(c, out) {
+    const { times } = c, panels = [], warnings = [], notes = [], done = { cbs: false, hl: false };
+    const add = (id, values, extra) => { if (values && !values.every(v => v == null)) panels.push({ id, ...PANEL_META[id], values, ...(extra || {}) }); };
+    const cum = (ds) => { let s = 0; return ds.map(d => (d == null ? null : (s += d))); };
+    if (out.mkErr) { warnings.push('Coinalyze: ' + out.mkErr.message + (out.mkErr.cors ? ' → 브라우저 직접 호출이 막힘. 설정의 프록시 URL 사용 필요' : '')); return { panels, warnings, notes, done }; }
+    const cvd = (symbol) => {
+      const r = out.ohlcv.rows.find(x => x.symbol === symbol), h = (r && r.history) || [];
+      return cum(FC.alignTo(times, h.map(x => ({ t: x.t * 1000, d: (2 * x.bv - x.v) * x.c })), 'd')); // 기초자산 수량 × 종가 ≈ USD
+    };
+    if (out.ohlcv) {
+      if (out.cbSym) { add('cbs', cvd(out.cbSym)); done.cbs = true; }
+      if (out.hlSym) { add('hl', cvd(out.hlSym)); done.hl = true; }
+    } else if (out.ohlcvErr) {
+      if (out.cbSym) warnings.push('Coinbase 현물 CVD(Coinalyze): ' + out.ohlcvErr.message);
+      if (out.hlSym) warnings.push('Hyperliquid CVD(Coinalyze): ' + out.ohlcvErr.message);
+    }
+    if (out.liq) {
+      const m = new Map();
+      for (const r of out.liq.rows) for (const x of r.history || []) {
+        const t = x.t * 1000, a = m.get(t) || { t, l: 0, s: 0 }; a.l += x.l || 0; a.s += x.s || 0; m.set(t, a);
+      }
+      add('liq', times.map(t => m.get(t) || { l: 0, s: 0 }), { note: out.liqSyms.length + '개 거래소 합산' });
+    } else if (out.liqErr) warnings.push('청산(Coinalyze): ' + out.liqErr.message);
+    // 캐시로 대체한 경우: 빨간 경고 대신 회색 안내
+    const st = [out.ohlcv, out.liq].filter(r => isStale(r) && r.err);
+    if (st.length) {
+      const lim = st.find(r => r.err.limited || r.err.status === 429);
+      const at = Math.min(...st.map(r => r.at)), p = FC.kstParts(at), hm = String(p.hour).padStart(2, '0') + ':' + String(p.minute).padStart(2, '0');
+      if (lim) { const n = Math.max(CA.backoffLeftS(), lim.err.waitS || 0); notes.push(`Coinalyze 한도 대기 중 · 캐시 데이터 표시 (${n ? n + '초 후 재시도' : '다음 새로고침 때 재시도'}) · ${hm} 기준`); }
+      else notes.push(`Coinalyze 새로고침 실패(${st[0].err.message}) · 캐시 데이터 표시 · ${hm} 기준`);
+    }
+    return { panels, warnings, notes, done };
   }
 
   /* ---------- 모의 데이터 (?mock=1) ---------- */
@@ -220,29 +279,23 @@
     if (bnS) addPanel('bns', cum(bnDelta(bnS)));
 
     // Coinalyze (키가 있으면): Coinbase 현물 CVD, HL CVD, 합산 청산
-    let mk = null;
+    // 캐시가 있으면 즉시 표시하고(오래됐으면 백그라운드 갱신 → caRefresh), 없을 때만 기다림
+    let ca = null, caRefresh = null;
     const fromS = Math.floor(times[0] / 1000), toS = Math.floor((times[times.length - 1] + T.ms) / 1000);
     if (!mock && settings.caKey) {
-      try { mk = await caMarkets(settings); }
-      catch (e) { warnings.push('Coinalyze: ' + e.message + (e.cors ? ' → 브라우저 직접 호출이 막힘. 설정의 프록시 URL 사용 필요' : '')); }
+      const c = { settings, sym, tf, isHip, times, fromS, toS };
+      const cached = await caFetch(c, 'cache');
+      if (!cached.miss && (cached.ohlcv || cached.liq)) {
+        ca = caBuild(c, cached);
+        if (isStale(cached.ohlcv) || isStale(cached.liq)) caRefresh = async () => caBuild(c, await caFetch(c, 'net'));
+      } else ca = caBuild(c, await caFetch(c, 'net'));
+      panels.push(...ca.panels); warnings.push(...ca.warnings);
     }
-    // 4) Coinbase 현물 CVD
-    if (!isHip) {
-      let done = false;
-      if (mk) {
-        const cbCode = exCode(mk, /coinbase/i);
-        const m = mk.spot.find(x => x.exchange === cbCode && x.base === sym && /^USD$/.test(x.quote) && x.bs)
-               || mk.spot.find(x => x.exchange === cbCode && x.base === sym && x.bs);
-        if (m) {
-          try {
-            const rows = await caOhlcvCvd(settings, m.symbol, tf, fromS, toS);
-            addPanel('cbs', cum(FC.alignTo(times, rows.map(r => ({ t: r.t, d: 2 * r.bv - r.v })), 'd')));
-            done = true;
-          } catch (e) { warnings.push('Coinbase 현물 CVD(Coinalyze): ' + e.message); }
-        }
-      }
-      if (!done && mock) { addPanel('cbs', cum(bnDelta(bnS).map(d => d && d * 0.3))); done = true; }
-      if (!done) {
+    const caDone = (ca && ca.done) || {};
+    // 4) Coinbase 현물 CVD (Coinalyze 없으면 근사)
+    if (!isHip && !caDone.cbs) {
+      if (mock) addPanel('cbs', cum(bnDelta(bnS).map(d => d && d * 0.3)));
+      else {
         try {
           const cb = await getCb();
           const agg = T.cbAgg > 1 ? FC.resample(cb, T.ms) : cb;
@@ -252,46 +305,33 @@
       }
     }
     // 5) Hyperliquid 선물 CVD
-    {
-      let done = false;
-      if (mk) {
-        const hlCode = exCode(mk, /hyperliquid/i);
-        const m = mk.future.find(x => x.exchange === hlCode && x.perp && matchBase(x, sym) && x.bs);
-        if (m) {
-          try {
-            const rows = await caOhlcvCvd(settings, m.symbol, tf, fromS, toS);
-            addPanel('hl', cum(FC.alignTo(times, rows.map(r => ({ t: r.t, d: 2 * r.bv - r.v })), 'd')));
-            done = true;
-          } catch (e) { warnings.push('Hyperliquid CVD(Coinalyze): ' + e.message); }
-        }
-      }
-      if (!done && mock) { addPanel('hl', cum(bnDelta(full).map(d => d && d * 0.2))); done = true; }
-      if (!done && hl) {
+    if (!caDone.hl) {
+      if (mock) addPanel('hl', cum(bnDelta(full).map(d => d && d * 0.2)));
+      else if (hl) {
         const ap = hl.map(x => ({ t: x.t, d: Math.sign(x.c - x.o) * x.v * x.c }));
         addPanel('hl', cum(FC.alignTo(times, ap, 'd')), { approx: true, title: PANEL_META.hl.title + ' (근사)' });
       }
     }
-    // 6) 거래소 합산 청산
-    if (mock) {
-      addPanel('liq', times.map((t, i) => ({ l: (i % 7 === 0 ? 3e6 * (1 + Math.sin(i)) : 2e5), s: (i % 11 === 0 ? 4e6 : 1e5) })));
-    } else if (mk) {
-      const syms = pickLiqSymbols(mk, sym);
-      if (syms.length) {
-        try {
-          const rows = await caLiq(settings, syms, tf, fromS, toS);
-          const m = new Map(rows.map(r => [r.t, r]));
-          addPanel('liq', times.map(t => m.get(t) || { l: 0, s: 0 }), { note: syms.length + '개 거래소 합산' });
-        } catch (e) { warnings.push('청산(Coinalyze): ' + e.message); }
-      }
-    }
+    // 6) 거래소 합산 청산 (모의)
+    if (mock) addPanel('liq', times.map((t, i) => ({ l: (i % 7 === 0 ? 3e6 * (1 + Math.sin(i)) : 2e5), s: (i % 11 === 0 ? 4e6 : 1e5) })));
 
     // 프리미엄/선물/현물 표시 순서 고정
-    const order = ['premium', 'bnf', 'bns', 'cbs', 'hl', 'liq'];
-    panels.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
+    sortPanels(panels);
     if (!mock && !settings.caKey) warnings.push('Coinalyze 키 미설정: Coinbase·HL CVD는 근사치, 합산 청산은 숨김');
 
-    return { sym, tf, tfLabel: T.label, tfMs: T.ms, candles, times, emas: E, fvg, ob, bbfvg, sessions, pd, tdo, panels, src, warnings, fetchedAt: now, status };
+    const caW = ca ? ca.warnings : [];
+    return { sym, tf, tfLabel: T.label, tfMs: T.ms, candles, times, emas: E, fvg, ob, bbfvg, sessions, pd, tdo, panels, src, warnings, fetchedAt: now, status,
+      baseWarnings: warnings.filter(w => !caW.includes(w)), caWarnings: caW, notes: ca ? ca.notes : [], caRefresh };
+  }
+  const ORDER = ['premium', 'bnf', 'bns', 'cbs', 'hl', 'liq'];
+  function sortPanels(panels) { return panels.sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id)); }
+  // 백그라운드 Coinalyze 갱신 결과를 기존 데이터에 반영 (같은 id 패널 교체)
+  function applyCa(D, r) {
+    const ids = new Set(r.panels.map(p => p.id));
+    D.panels = sortPanels([...D.panels.filter(p => !ids.has(p.id)), ...r.panels]);
+    D.caWarnings = r.warnings; D.notes = r.notes; D.warnings = [...D.baseWarnings, ...r.warnings];
+    return D;
   }
 
-  self.FCData = { loadAll, TF, PANEL_META, pickLiqSymbols };
+  self.FCData = { loadAll, applyCa, TF, PANEL_META, pickLiqSymbols, CA };
 })();

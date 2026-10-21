@@ -194,12 +194,94 @@
   }
 
   /* ---------- 오더블록 (OB) ----------
-   * 강세 OB: 음봉 j 다음 봉 j+1이 양봉이고, j+1..j+3 중 어떤 종가가 high[j]를 상향 돌파하며,
-   *          max(high[j+1..j+3]) − low[j] ≥ disp × ATR14 (기본 1.5) → 구간 [low[j], high[j]]
-   * 약세 OB: 양봉 j, j+1 음봉, j+1..j+3 중 종가가 low[j] 하향 돌파, high[j] − min(low[j+1..j+3]) ≥ disp × ATR
-   * 무효화: 이후 종가가 구간을 반대로 이탈(강세: close < low[j], 약세: close > high[j]) → end = 그 봉
-   * 첫 터치(mitigation) 시각은 touched로 기록(표시용) */
+   * 방식 2가지 (opts.mode, 기본은 setOBMode()로 정한 값 = 'baekdo')
+   *
+   * [백도식 'baekdo' — 기본] 구조 돌파(BOS/MSS) 기준
+   *  1) 스윙: 프랙탈. 고가[s]가 왼쪽 k봉보다 크고(>) 오른쪽 k봉 이상(≥)이면 스윙 고점 (기본 k=2, opts.swing). s+k봉 마감 후 확정.
+   *  2) 강세 OB: 봉 i의 종가가 아직 돌파되지 않은 가장 최근 스윙 고점 s의 고가를 상향 돌파(확정된 스윙만, s+k < i).
+   *     레그 원점 m = [s, i] 구간 최저가 봉. OB = [m−3, i−1] 안의 마지막 음봉(종가<시가) j 중
+   *     저가가 레그 하단 1/3 안에 있는 것(저가[j] − 저가[m] ≤ (최고가[m..i] − 저가[m]) / 3) = 상승 직전 마지막 음봉.
+   *     변위 조건: 최고가[j..i] − 저가[j] ≥ disp × ATR14(기본 1.5) 이거나, j 이후~i 사이에 강세 FVG가 있을 것.
+   *     구간 = 그 봉의 몸통 [min(시가,종가), max(시가,종가)]. 몸통 < 0.1×ATR(도지)이면 바깥쪽 꼬리까지(강세: 하단 = 저가).
+   *  3) 약세는 대칭(스윙 저점 종가 하향 돌파, 하락 직전 마지막 양봉, 도지는 위 꼬리까지).
+   *  4) 무효화: 돌파 봉 다음부터 종가가 구간 반대편을 넘으면(강세: 종가 < 하단) end = 그 봉. 첫 터치는 touched.
+   *     한 스윙은 한 번만 돌파(BOS 1회 = OB 1개).
+   *
+   * [넓게 'wide' — 이전 방식] 음봉 j 다음 봉 j+1이 양봉이고, j+1..j+3 중 어떤 종가가 high[j]를 상향 돌파하며,
+   *          max(high[j+1..j+3]) − low[j] ≥ disp × ATR14 (기본 1.5) → 구간 [low[j], high[j]] (꼬리 전체)
+   *   약세 OB: 양봉 j, j+1 음봉, j+1..j+3 중 종가가 low[j] 하향 돌파, high[j] − min(low[j+1..j+3]) ≥ disp × ATR
+   *   무효화: 이후 종가가 구간을 반대로 이탈(강세: close < low[j], 약세: close > high[j]) → end = 그 봉
+   *   BB+FVG(브레이커)는 항상 이 넓은 후보를 씁니다(findBBFVG 참고). */
+  let OB_MODE = 'baekdo';
+  function setOBMode(m) { OB_MODE = m === 'wide' ? 'wide' : 'baekdo'; return OB_MODE; }
+  function getOBMode() { return OB_MODE; }
   function findOB(candles, opts = {}) {
+    return (opts.mode || OB_MODE) === 'wide' ? findOBWide(candles, opts) : findOBBaekdo(candles, opts);
+  }
+  // 프랙탈 스윙: {hi:[s...], lo:[s...]} (확정 시점 = s + k)
+  function swings(candles, k = 2) {
+    const hi = [], lo = [];
+    for (let s = k; s < candles.length - k; s++) {
+      let h = true, l = true;
+      for (let q = 1; q <= k; q++) {
+        if (!(candles[s].h > candles[s - q].h && candles[s].h >= candles[s + q].h)) h = false;
+        if (!(candles[s].l < candles[s - q].l && candles[s].l <= candles[s + q].l)) l = false;
+      }
+      if (h) hi.push(s); if (l) lo.push(s);
+    }
+    return { hi, lo };
+  }
+  function findOBBaekdo(candles, opts = {}) {
+    const k = opts.swing ?? 2, disp = opts.disp ?? 1.5, doji = opts.doji ?? 0.1;
+    const A = atr(candles, 14), n = candles.length;
+    const sw = swings(candles, k);
+    const fvg = findFVG(candles, opts);
+    const out = [];
+    for (const dir of ['bull', 'bear']) {
+      const bull = dir === 'bull', list = bull ? sw.hi : sw.lo;
+      let p = 0, cur = -1, used = new Set();
+      for (let i = 0; i < n; i++) {
+        while (p < list.length && list[p] + k < i) { cur = list[p]; p++; } // i 직전까지 확정된 가장 최근 스윙
+        if (cur < 0 || used.has(cur)) continue;
+        const c = candles[i], lvl = bull ? candles[cur].h : candles[cur].l;
+        if (bull ? !(c.c > lvl) : !(c.c < lvl)) continue;
+        used.add(cur);
+        const a = A[i]; if (a == null) continue;
+        // 레그 원점 m: [cur, i] 최저가(강세) / 최고가(약세)
+        let m = cur;
+        for (let q = cur; q <= i; q++) if (bull ? candles[q].l < candles[m].l : candles[q].h > candles[m].h) m = q;
+        let ext = bull ? -Infinity : Infinity;
+        for (let q = m; q <= i; q++) ext = bull ? Math.max(ext, candles[q].h) : Math.min(ext, candles[q].l);
+        const leg = Math.abs(ext - (bull ? candles[m].l : candles[m].h));
+        let j = -1;
+        for (let q = i - 1; q >= Math.max(0, m - 3); q--) {
+          const x = candles[q];
+          if (bull ? !(x.c < x.o) : !(x.c > x.o)) continue;
+          const off = bull ? x.l - candles[m].l : candles[m].h - x.h;
+          if (off <= leg / 3) { j = q; break; }
+        }
+        if (j < 0) continue;
+        const o = candles[j];
+        let ex2 = bull ? -Infinity : Infinity;
+        for (let q = j; q <= i; q++) ex2 = bull ? Math.max(ex2, candles[q].h) : Math.min(ex2, candles[q].l);
+        const move = bull ? ex2 - o.l : o.h - ex2;
+        const hasFvg = fvg.some(g => g.dir === dir && g.i0 + 1 > j && g.i0 + 1 <= i);
+        if (!(move >= disp * a || hasFvg)) continue;
+        let top = Math.max(o.o, o.c), bottom = Math.min(o.o, o.c);
+        const thin = top - bottom < doji * a;
+        if (thin) { if (bull) bottom = o.l; else top = o.h; }
+        const z = { dir, top, bottom, i0: j, brk: i, swing: cur, created: i, doji: thin, end: null, touched: null, mode: 'baekdo' };
+        for (let q = i + 1; q < n; q++) {
+          const x = candles[q];
+          if (z.touched == null && (bull ? x.l <= top : x.h >= bottom)) z.touched = q;
+          if (bull ? x.c < bottom : x.c > top) { z.end = q; break; }
+        }
+        out.push(z);
+      }
+    }
+    return out.sort((a, b) => a.i0 - b.i0 || a.brk - b.brk);
+  }
+  function findOBWide(candles, opts = {}) {
     const disp = opts.disp ?? 1.5, look = 3;
     const A = atr(candles, 14);
     const out = [];
@@ -216,7 +298,7 @@
         if (brk && c.h - mn >= disp * a) ob = { dir: 'bear', top: c.h, bottom: c.l };
       }
       if (!ob) continue;
-      ob.i0 = j; ob.end = null; ob.touched = null;
+      ob.i0 = j; ob.end = null; ob.touched = null; ob.mode = 'wide';
       for (let k = j + look + 1; k < candles.length; k++) {
         const x = candles[k];
         if (ob.touched == null && ((ob.dir === 'bull' && x.l <= ob.top) || (ob.dir === 'bear' && x.h >= ob.bottom))) ob.touched = k;
@@ -229,7 +311,7 @@
 
 
   /* ---------- BB+FVG (브레이커 블록 + FVG 겹침, 일명 Unicorn) ----------
-   * 1) 브레이커: 실패한 OB. findOB의 OB가 종가로 반대편 돌파되면(=OB 무효화 봉 brk) 방향이 뒤집혀 브레이커가 됨.
+   * 1) 브레이커: 실패한 OB. findOBWide(넓게)의 OB가 종가로 반대편 돌파되면(=OB 무효화 봉 brk) 방향이 뒤집혀 브레이커가 됨.
    *    약세 OB(하락 직전 양봉) → 이후 종가 > 고가 ⇒ 강세 브레이커 / 강세 OB(상승 직전 음봉) → 종가 < 저가 ⇒ 약세 브레이커
    *    브레이커 구간 = 그 OB 봉의 몸통 [min(시가,종가), max(시가,종가)] (opts.wicks=true면 꼬리 포함 고가~저가)
  *    OB 봉 바로 앞에 같은 색 봉이 이어지면 그 묶음(최대 3개, opts.maxRun) 몸통 전체를 구간으로 봄 (ICT 'series of candles')
@@ -239,7 +321,8 @@
    * 터치(touched): 꼬리가 구간 안쪽 끝에 닿은 첫 봉(강세: 저가 ≤ 상단, 약세: 고가 ≥ 하단) — 표시용, 유지. */
   function findBBFVG(candles, opts = {}) {
     const N = opts.n ?? 10, wicks = !!opts.wicks, maxRun = opts.maxRun ?? 3;
-    const obs = opts.ob || findOB(candles, opts);
+    // 브레이커 후보는 항상 '넓게'(이전 방식) OB — 백도식 OB는 BOS당 1개라 후보가 너무 적어 BB+FVG가 거의 사라짐
+    const obs = opts.ob && opts.ob.every(o => o.mode === 'wide') ? opts.ob : findOBWide(candles, opts);
     const fvgs = opts.fvg || findFVG(candles, opts);
     const out = [];
     for (const ob of obs) {
@@ -339,5 +422,5 @@
   }
 
   return { ema, atr, tzParts, kstParts, fmtKstAxis, fmtKstStamp, SESSIONS, sessionOf, sessionLevels,
-    prevDayLevels, nyMidnight, trueDayOpen, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, findBBFVG, alignTo, resample, fmtBig, fmtPrice };
+    prevDayLevels, nyMidnight, trueDayOpen, layoutLabels, cvdFromBuyTotal, cvdApprox, findFVG, findOB, findOBWide, findOBBaekdo, swings, setOBMode, getOBMode, findBBFVG, alignTo, resample, fmtBig, fmtPrice };
 });

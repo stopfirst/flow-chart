@@ -58,6 +58,9 @@
     <label>Coinalyze 프록시 URL <small>(선택 · CORS 차단 시)</small>
       <input id="caProxy" type="url" placeholder="https://api.coinalyze.net/v1">
     </label>
+    <label>OB 방식
+      <select id="obMode"><option value="baekdo">백도식 (기본 · 방향별 1개, 몸통)</option><option value="wide">넓게 (이전 방식 · 여러 개, 꼬리 전체)</option></select>
+    </label>
     <label>워터마크 라벨
       <input id="label" maxlength="24" placeholder="STOPFIRST">
     </label>
@@ -67,6 +70,7 @@
 </dialog>
 
 <script src="js/calc.js"></script>
+<script src="js/ca.js"></script>
 <script src="js/data.js"></script>
 <script src="js/render.js"></script>
 <script src="js/picker.js"></script>
