@@ -104,7 +104,7 @@
     const labels = [];
     for (const lv of levels) if (!lv.rangeOnly && inR(lv.v)) labels.push({ v: lv.v, text: `${lv.name} ${fmtLv(lv.v)}`, key: lv.key });
     const visMid = (z) => (Math.min(z.top, hi) + Math.max(z.bottom, lo)) / 2; // 화면에 보이는 부분의 중앙
-    for (const z of obs) labels.push({ v: visMid(z), text: z.mode === 'baekdo' && !narrow ? `OB ${fmtLv((z.top + z.bottom) / 2)}` : 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
+    for (const z of obs) labels.push({ v: visMid(z), text: 'OB', rgbs: z.dir === 'bull' ? RGB.bull : RGB.bear, ob: true });
     for (const z of bbs) labels.push({ v: visMid(z), text: narrow ? 'BB+FVG' : `BB+FVG ${fmtLv(z.mid)}`, rgbs: z.dir === 'bull' ? RGB.bbBull : RGB.bbBear, ob: true });
     const maxW = Math.max(0, ...labels.map(lb => ctx.measureText(lb.text).width));
     const R = Math.round(Math.max(narrow ? 40 : 56, Math.min(W * (narrow ? 0.36 : 0.26), maxW + 18)));

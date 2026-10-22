@@ -237,7 +237,8 @@
     const E = {}; for (const k in emas) E[k] = emas[k].slice(cut);
     const shift = (arr) => arr.map(z => ({ ...z, i0: z.i0 - cut, end: z.end == null ? null : z.end - cut, created: z.created != null ? z.created - cut : undefined }));
     const fvg = shift(FC.findFVG(full)).filter(z => (z.end == null || z.end >= 0) && z.i0 >= -20);
-    const obAll = FC.findOB(full), fvgAll = FC.findFVG(full);
+    const lastClosed = full.length - 1 - (full.length && full[full.length - 1].t + T.ms > now ? 1 : 0); // 진행 중인 마지막 봉은 OB 돌파·무효화 판정에서 제외
+    const obAll = FC.findOB(full, { lastClosed }), fvgAll = FC.findFVG(full);
     const ob = shift(obAll).filter(z => z.end == null && z.i0 >= -WARMUP);
     // BB+FVG: 무효화되지 않은 것만 (표시 개수·거리 선택은 render.js)
     const bbfvg = shift(FC.findBBFVG(full, { ob: obAll, fvg: fvgAll })).map(z => ({ ...z, obI: z.obI - cut, obStart: z.obStart - cut, brk: z.brk - cut, fvgI: z.fvgI - cut, touched: z.touched == null ? null : z.touched - cut })).filter(z => z.end == null && z.i0 >= -WARMUP);

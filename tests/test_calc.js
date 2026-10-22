@@ -281,6 +281,44 @@ t('OB(백도식): 종가가 하단 아래면 무효화, 터치는 기록', () =>
   C[20] = mk(20 * H, 99, 99.2, 96.5, 97);      // 종가 97 < 97.6 → 무효
   z = FC.findOB(C).find(q => q.dir === 'bull'); assert.strictEqual(z.end, 20);
 });
+t('OB(백도식): 진행 중인 봉(lastClosed 이후)은 무효화에 안 씀', () => {
+  const C = bosSeries([98.2, 98.5, 97.3, 97.6]);
+  C[21] = mk(21 * H, 105, 105.1, 96.5, 97);      // 마지막 봉이 하단 아래에서 거래 중
+  assert.strictEqual(FC.findOB(C).find(q => q.dir === 'bull').end, 21);                  // 마감 봉으로 보면 무효
+  assert.strictEqual(FC.findOB(C, { lastClosed: 20 }).find(q => q.dir === 'bull').end, null); // 진행 중이면 유지
+});
+t('OB(백도식): 상승 추세 중 내부 스윙 저점만 깬 하락은 약세 OB 없음, 보호 저점을 깨면 CHoCH 약세 OB', () => {
+  const C = bosSeries([98.2, 98.5, 97.3, 97.6]); let t0 = C.length; const add = (o, h, l, c) => C.push(mk(t0++ * H, o, h, l, c));
+  for (let q = 18; q < 22; q++) C[q] = mk(q * H, 104.8, 105.5 + (q - 18) * 0.1, 104 + (q - 18) * 0.2, 105); // 계속 오르는 고가(새 스윙 없음)
+  add(105, 106, 104.5, 105.8); add(105.8, 107, 105.5, 106.8); add(106.8, 107.2, 106, 106.2); // 22 23 24(스윙 고점 107.2)
+  add(106.2, 106.5, 105, 105.3); add(105.3, 106.4, 105.2, 106.2); add(106.2, 107, 106, 106.8); // 25(내부 스윙 저점 105) 26 27(마지막 양봉)
+  add(106.8, 106.9, 103.5, 103.8);              // 28 종가 103.8 < 105 → 내부 스윙만 깸 (보호 저점 96.8은 그대로)
+  add(103.8, 104, 101, 101.5);                  // 29
+  let bear = FC.findOB(C).filter(q => q.dir === 'bear');
+  assert.strictEqual(bear.length, 0, '내부 스윙 돌파는 OB를 만들지 않음');
+  add(101.5, 101.6, 95, 95.5);                  // 30 종가 95.5 < 보호 저점 96.8(13봉) → CHoCH
+  bear = FC.findOB(C).filter(q => q.dir === 'bear');
+  assert.strictEqual(bear.length, 1); const z = bear[0];
+  assert.strictEqual(z.kind, 'choch'); assert.strictEqual(z.swing, 13); assert.strictEqual(z.brk, 30); assert.strictEqual(z.i0, 27);
+  near(z.bottom, 106.2); near(z.top, 106.8);
+  assert.strictEqual(FC.findOB(C).find(q => q.dir === 'bull').kind, 'bos');
+});
+t('OB(백도식) 실데이터: BTC 1H(현물, 2026-10-22 11시) 강세 OB = 21일 19시 음봉, 약세 OB 없음', () => {
+  const C = require('./fixtures/btcusdt_spot_1h_20261022.json');
+  const kst = (i) => new Date(C[i].t + 9 * H).toISOString().slice(5, 16);
+  const live = FC.findOB(C, { lastClosed: C.length - 2 }).filter(z => z.end == null);
+  const bull = live.filter(z => z.dir === 'bull').sort((a, b) => b.i0 - a.i0)[0];
+  assert.strictEqual(kst(bull.i0), '10-21T19:00'); assert.strictEqual(kst(bull.brk), '10-21T22:00'); assert.strictEqual(kst(bull.swing), '10-21T17:00');
+  near(bull.top, 83425.47);
+  assert.strictEqual(live.filter(z => z.dir === 'bear' && z.i0 >= C.length - 60).length, 0, '22일 04시 내부 스윙 저점 돌파는 CHoCH가 아님');
+});
+t('OB(백도식) 실데이터: ETH 1H 강세 OB 2,384.68–2,387.27 (20일 20시 봉, 23시 종가 2,472.58 돌파)', () => {
+  const C = require('./fixtures/ethusdt_spot_1h_20261021.json');
+  const kst = (i) => new Date(C[i].t + 9 * H).toISOString().slice(5, 16);
+  const z = FC.findOB(C).filter(q => q.dir === 'bull' && q.end == null).sort((a, b) => b.i0 - a.i0)[0];
+  assert.strictEqual(kst(z.i0), '10-20T20:00'); assert.strictEqual(kst(z.brk), '10-20T23:00'); near(C[z.brk].c, 2472.58);
+  near(z.bottom, 2384.68); near(z.top, 2387.27);
+});
 t('OB(백도식): 약세 대칭 (스윙 저점 종가 하향 돌파 → 직전 마지막 양봉 몸통)', () => {
   const C = bosSeries([98.2, 98.5, 97.3, 97.6]).map(c => mk(c.t, 200 - c.o, 200 - c.l, 200 - c.h, 200 - c.c)); // 가격 반전
   const z = FC.findOB(C).filter(q => q.dir === 'bear');

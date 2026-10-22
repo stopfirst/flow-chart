@@ -196,16 +196,19 @@
   /* ---------- 오더블록 (OB) ----------
    * 방식 2가지 (opts.mode, 기본은 setOBMode()로 정한 값 = 'baekdo')
    *
-   * [백도식 'baekdo' — 기본] 구조 돌파(BOS/MSS) 기준
+   * [백도식 'baekdo' — 기본] 구조 돌파(BOS/CHoCH) 기준
    *  1) 스윙: 프랙탈. 고가[s]가 왼쪽 k봉보다 크고(>) 오른쪽 k봉 이상(≥)이면 스윙 고점 (기본 k=2, opts.swing). s+k봉 마감 후 확정.
-   *  2) 강세 OB: 봉 i의 종가가 아직 돌파되지 않은 가장 최근 스윙 고점 s의 고가를 상향 돌파(확정된 스윙만, s+k < i).
-   *     레그 원점 m = [s, i] 구간 최저가 봉. OB = [m−3, i−1] 안의 마지막 음봉(종가<시가) j 중
+   *  2) 구조(추세) 상태: 돌파가 날 때마다 추세 = 그 방향, 보호 극점 = 그 돌파 레그의 원점 m(강세: 최저가 봉, 약세: 최고가 봉).
+   *     - 추세 방향(또는 추세 없음) 돌파 = BOS: 종가가 아직 넘지 않은 가장 최근 확정 스윙(강세: 고가, 약세: 저가)을 넘음.
+   *     - 추세 반대 돌파 = CHoCH: 종가가 보호 극점(상승 추세 → 보호 저점의 저가, 하락 추세 → 보호 고점의 고가)을 넘을 때만.
+   *       그 사이의 내부 스윙 돌파는 구조 돌파가 아님(OB 없음, 그 스윙은 소진).
+   *  3) 강세 OB(돌파 봉 i, 깨진 점 s): 레그 원점 m = [s, i] 최저가 봉. OB = [m−3, i−1] 안의 마지막 음봉 j 중
    *     저가가 레그 하단 1/3 안에 있는 것(저가[j] − 저가[m] ≤ (최고가[m..i] − 저가[m]) / 3) = 상승 직전 마지막 음봉.
    *     변위 조건: 최고가[j..i] − 저가[j] ≥ disp × ATR14(기본 1.5) 이거나, j 이후~i 사이에 강세 FVG가 있을 것.
    *     구간 = 그 봉의 몸통 [min(시가,종가), max(시가,종가)]. 몸통 < 0.1×ATR(도지)이면 바깥쪽 꼬리까지(강세: 하단 = 저가).
-   *  3) 약세는 대칭(스윙 저점 종가 하향 돌파, 하락 직전 마지막 양봉, 도지는 위 꼬리까지).
-   *  4) 무효화: 돌파 봉 다음부터 종가가 구간 반대편을 넘으면(강세: 종가 < 하단) end = 그 봉. 첫 터치는 touched.
-   *     한 스윙은 한 번만 돌파(BOS 1회 = OB 1개).
+   *  4) 약세는 대칭(하락 직전 마지막 양봉, 도지는 위 꼬리까지).
+   *  5) 무효화: 돌파 봉 다음부터 마감된 봉의 종가가 구간 반대편을 넘으면(강세: 종가 < 하단) end = 그 봉. 첫 터치는 touched.
+   *     opts.lastClosed(기본 마지막 봉) 이후의 진행 중인 봉은 돌파·무효화 판정에 쓰지 않음. 한 스윙은 한 번만 돌파.
    *
    * [넓게 'wide' — 이전 방식] 음봉 j 다음 봉 j+1이 양봉이고, j+1..j+3 중 어떤 종가가 high[j]를 상향 돌파하며,
    *          max(high[j+1..j+3]) − low[j] ≥ disp × ATR14 (기본 1.5) → 구간 [low[j], high[j]] (꼬리 전체)
@@ -234,22 +237,30 @@
   function findOBBaekdo(candles, opts = {}) {
     const k = opts.swing ?? 2, disp = opts.disp ?? 1.5, doji = opts.doji ?? 0.1;
     const A = atr(candles, 14), n = candles.length;
+    const L = Math.min(n - 1, opts.lastClosed ?? n - 1); // 마감된 마지막 봉 (진행 중인 봉은 돌파·무효화에 안 씀)
     const sw = swings(candles, k);
     const fvg = findFVG(candles, opts);
-    const out = [];
-    for (const dir of ['bull', 'bear']) {
-      const bull = dir === 'bull', list = bull ? sw.hi : sw.lo;
-      let p = 0, cur = -1, used = new Set();
-      for (let i = 0; i < n; i++) {
-        while (p < list.length && list[p] + k < i) { cur = list[p]; p++; } // i 직전까지 확정된 가장 최근 스윙
-        if (cur < 0 || used.has(cur)) continue;
-        const c = candles[i], lvl = bull ? candles[cur].h : candles[cur].l;
-        if (bull ? !(c.c > lvl) : !(c.c < lvl)) continue;
-        used.add(cur);
+    const out = [], used = new Set();
+    const ptr = { hi: 0, lo: 0 }, cur = { hi: -1, lo: -1 };
+    let trend = null, prot = -1; // 구조 추세 + 보호 극점(직전 돌파 레그의 원점: 상승 추세 = 보호 저점, 하락 추세 = 보호 고점)
+    for (let i = 0; i <= L; i++) {
+      for (const key of ['hi', 'lo']) { const list = sw[key]; while (ptr[key] < list.length && list[ptr[key]] + k < i) cur[key] = list[ptr[key]++]; }
+      const c = candles[i];
+      for (const dir of ['bull', 'bear']) {
+        const bull = dir === 'bull', s = cur[bull ? 'hi' : 'lo'];
+        const lvlOf = (q) => bull ? candles[q].h : candles[q].l;
+        const beyond = (q) => q >= 0 && (bull ? c.c > lvlOf(q) : c.c < lvlOf(q));
+        let brokeAt = -1;
+        if (trend && trend !== dir) { if (beyond(prot)) brokeAt = prot; }          // 추세 반대(CHoCH): 보호 극점을 종가로 깨야만
+        else if (s >= 0 && !used.has(s) && beyond(s)) brokeAt = s;              // 추세 방향(BOS): 가장 최근 확정 스윙
+        if (s >= 0 && !used.has(s) && beyond(s)) used.add(s);                   // 내부 스윙도 한 번 넘으면 소진
+        if (brokeAt < 0) continue;
+        // 레그 원점 m: [brokeAt, i] 최저가(강세) / 최고가(약세) → 새 보호 극점
+        let m = brokeAt;
+        for (let q = brokeAt; q <= i; q++) if (bull ? candles[q].l < candles[m].l : candles[q].h > candles[m].h) m = q;
+        const kind = trend && trend !== dir ? 'choch' : 'bos';
+        trend = dir; prot = m;
         const a = A[i]; if (a == null) continue;
-        // 레그 원점 m: [cur, i] 최저가(강세) / 최고가(약세)
-        let m = cur;
-        for (let q = cur; q <= i; q++) if (bull ? candles[q].l < candles[m].l : candles[q].h > candles[m].h) m = q;
         let ext = bull ? -Infinity : Infinity;
         for (let q = m; q <= i; q++) ext = bull ? Math.max(ext, candles[q].h) : Math.min(ext, candles[q].l);
         const leg = Math.abs(ext - (bull ? candles[m].l : candles[m].h));
@@ -260,7 +271,7 @@
           const off = bull ? x.l - candles[m].l : candles[m].h - x.h;
           if (off <= leg / 3) { j = q; break; }
         }
-        if (j < 0) continue;
+        if (j < 0 || out.some(q => q.dir === dir && q.i0 === j)) continue; // 같은 봉 OB 중복 방지
         const o = candles[j];
         let ex2 = bull ? -Infinity : Infinity;
         for (let q = j; q <= i; q++) ex2 = bull ? Math.max(ex2, candles[q].h) : Math.min(ex2, candles[q].l);
@@ -270,11 +281,11 @@
         let top = Math.max(o.o, o.c), bottom = Math.min(o.o, o.c);
         const thin = top - bottom < doji * a;
         if (thin) { if (bull) bottom = o.l; else top = o.h; }
-        const z = { dir, top, bottom, i0: j, brk: i, swing: cur, created: i, doji: thin, end: null, touched: null, mode: 'baekdo' };
+        const z = { dir, top, bottom, i0: j, brk: i, swing: brokeAt, kind, created: i, doji: thin, end: null, touched: null, mode: 'baekdo' };
         for (let q = i + 1; q < n; q++) {
           const x = candles[q];
           if (z.touched == null && (bull ? x.l <= top : x.h >= bottom)) z.touched = q;
-          if (bull ? x.c < bottom : x.c > top) { z.end = q; break; }
+          if (q <= L && (bull ? x.c < bottom : x.c > top)) { z.end = q; break; }
         }
         out.push(z);
       }
