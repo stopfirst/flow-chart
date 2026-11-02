@@ -155,7 +155,10 @@
     button: $('symbtn'), chips: $('favchips'), getSym: () => state.sym,
     onPick: (s) => { s = normSym(s); if (s === state.sym) return; state.sym = s; change(); },
   });
-  document.querySelectorAll('#tfseg button').forEach(b => b.addEventListener('click', () => { state.tf = b.dataset.tf; change(); }));
+  document.querySelectorAll('#tfseg button').forEach(b => b.addEventListener('click', () => {
+    if (!DATA.TF[b.dataset.tf]) { const u = new URL(location.href); u.searchParams.set('tf', b.dataset.tf); u.searchParams.set('r', Date.now()); location.replace(u); return; } // 구버전 JS 캐시 → 새로 받기
+    state.tf = b.dataset.tf; change();
+  }));
   $('bars').addEventListener('change', () => { state.bars = +$('bars').value; change(); });
   $('auto').addEventListener('change', () => { state.auto = +$('auto').value; saveState(); setAuto(); });
   $('refresh').addEventListener('click', load);
