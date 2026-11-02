@@ -331,7 +331,7 @@
    * 무효화: FVG 생성 다음 봉부터 종가가 구간 반대편 끝을 넘으면(강세: 종가 < 하단, 약세: 종가 > 상단) end = 그 봉.
    * 터치(touched): 꼬리가 구간 안쪽 끝에 닿은 첫 봉(강세: 저가 ≤ 상단, 약세: 고가 ≥ 하단) — 표시용, 유지. */
   function findBBFVG(candles, opts = {}) {
-    const N = opts.n ?? 10, wicks = !!opts.wicks, maxRun = opts.maxRun ?? 3;
+    const N = opts.n ?? 10, wicks = !!opts.wicks, maxRun = opts.maxRun ?? 3, maxAge = opts.maxAge ?? 30;
     // 브레이커 후보는 항상 '넓게'(이전 방식) OB — 백도식 OB는 BOS당 1개라 후보가 너무 적어 BB+FVG가 거의 사라짐
     const obs = opts.ob && opts.ob.every(o => o.mode === 'wide') ? opts.ob : findOBWide(candles, opts);
     const fvgs = opts.fvg || findFVG(candles, opts);
@@ -365,7 +365,14 @@
       }
       out.push(z);
     }
-    return out;
+    // 같은 돌파봉이 여러 OB를 한꺼번에 깨면 돌파 직전(가장 늦은) OB만 브레이커로 인정
+    const lastPerBrk = new Map();
+    for (const z of out) { const key = z.dir + ':' + z.brk, cur = lastPerBrk.get(key); if (!cur || z.obI > cur.obI) lastPerBrk.set(key, z); }
+    // 너무 오래된 OB(돌파까지 maxAge봉 초과)는 제외, 같은 방향 겹치는 구간은 더 최근(돌파가 늦은) 것만 남김
+    const kept = [...lastPerBrk.values()].filter(z => z.brk - z.obI <= maxAge).sort((a, b) => b.brk - a.brk || b.obI - a.obI);
+    const res = [];
+    for (const z of kept) if (!res.some(r => r.dir === z.dir && r.end == null && z.end == null && z.bottom < r.top && z.top > r.bottom)) res.push(z);
+    return res.sort((a, b) => a.brk - b.brk || a.obI - b.obI);
   }
 
 
