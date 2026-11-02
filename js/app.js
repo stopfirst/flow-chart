@@ -56,7 +56,7 @@
     const ph = narrow ? 110 : Math.max(78, Math.min(124, Math.floor(mainH / Math.max(1, n))));
     let cvs = side.querySelectorAll('canvas');
     if (cvs.length !== n) { side.innerHTML = D.panels.map(() => '<canvas></canvas>').join(''); cvs = side.querySelectorAll('canvas'); bindMini(); }
-    D.panels.forEach((P, i) => { const c = R.setupCanvas(cvs[i], sideW, ph - 4); R.drawMini(c, 0, 0, sideW, ph - 4, P, D.times, hover, {}); });
+    D.panels.forEach((P, i) => { const c = R.setupCanvas(cvs[i], sideW, ph - 4); R.drawMini(c, 0, 0, sideW, ph - 4, P, D.times, hover, { tfMs: D.tfMs }); });
     geom.sideL = 62; geom.sideW = sideW - 70;
     if (!n) side.innerHTML = '<div class="muted small" style="padding:20px 0">표시할 플로우 데이터가 없습니다</div>';
   }

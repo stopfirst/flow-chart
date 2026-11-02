@@ -66,7 +66,7 @@
       hour: d.getUTCHours(), minute: d.getUTCMinutes(), second: d.getUTCSeconds() };
   }
   const p2 = (n) => String(n).padStart(2, '0');
-  function fmtKstAxis(ms) { const p = kstParts(ms); return `${p2(p.month)}/${p2(p.day)}, ${p2(p.hour)}:${p2(p.minute)}`; }
+  function fmtKstAxis(ms, tfMs) { const p = kstParts(ms); return tfMs >= 864e5 ? `${String(p.year).slice(2)}/${p2(p.month)}/${p2(p.day)}` : `${p2(p.month)}/${p2(p.day)}, ${p2(p.hour)}:${p2(p.minute)}`; } // 일·주봉은 날짜만
   function fmtKstStamp(ms) { const p = kstParts(ms); return `${p.year}. ${p2(p.month)}. ${p2(p.day)}. ${p2(p.hour)}:${p2(p.minute)}:${p2(p.second)} KST`; }
 
   /* ---------- 세션 (ICT 킬존, 뉴욕 현지시간 기준 · DST 자동 반영) ----------
@@ -404,11 +404,11 @@
     const m = new Map(series.map(x => [x.t, x[key]]));
     return times.map(t => (m.has(t) ? m.get(t) : null));
   }
-  // 하위 봉을 상위 봉 버킷으로 합산 (예: 1h → 4h). 버킷은 UTC 기준 tfMs 정렬.
-  function resample(candles, tfMs) {
-    const out = []; let cur = null;
+  // 하위 봉을 상위 봉 버킷으로 합산 (예: 1h → 4h). 버킷은 UTC 기준 tfMs 정렬 (+offMs, 주봉은 월요일 시작).
+  function resample(candles, tfMs, offMs) {
+    const out = []; let cur = null, off = offMs || 0;
     for (const c of candles) {
-      const b = Math.floor(c.t / tfMs) * tfMs;
+      const b = Math.floor((c.t - off) / tfMs) * tfMs + off;
       if (!cur || cur.t !== b) { cur = { t: b, o: c.o, h: c.h, l: c.l, c: c.c, v: c.v }; out.push(cur); }
       else { cur.h = Math.max(cur.h, c.h); cur.l = Math.min(cur.l, c.l); cur.c = c.c; cur.v += c.v; }
     }

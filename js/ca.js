@@ -21,7 +21,7 @@
     if (Number.isFinite(d)) return Math.max(0, Math.ceil((d - (nowMs ?? Date.now())) / 1000));
     return DEFAULT_RA_S;
   }
-  const freshMs = (tfMs) => Math.max(60e3, (tfMs || 0) / 2);
+  const freshMs = (tfMs) => Math.min(30 * 60e3, Math.max(60e3, (tfMs || 0) / 2)); // 일·주봉도 최대 30분
 
   // rows: [{symbol, history:[{t(초), ...}]}] — 같은 심볼·같은 t는 새 값이 이김, t 오름차순
   function mergeRows(oldRows, newRows) {

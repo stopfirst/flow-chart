@@ -28,10 +28,11 @@ t('parseRetryAfter: 숫자·날짜·없음', () => {
   assert.strictEqual(CA.parseRetryAfter('abc'), 10);
   assert.strictEqual(CA.parseRetryAfter(new Date(1_000_000 + 30e3).toUTCString(), 1_000_000), 30);
 });
-t('freshMs = max(60초, 봉/2)', () => {
+t('freshMs = max(60초, 봉/2), 최대 30분', () => {
   assert.strictEqual(CA.freshMs(15 * 60e3), 450e3);
   assert.strictEqual(CA.freshMs(60e3), 60e3);
-  assert.strictEqual(CA.freshMs(4 * HMS), 2 * HMS);
+  assert.strictEqual(CA.freshMs(4 * HMS), 30 * 60e3);
+  assert.strictEqual(CA.freshMs(7 * 24 * HMS), 30 * 60e3);
 });
 t('mergeRows: 같은 t는 새 값, 정렬, 심볼 합집합', () => {
   const a = [{ symbol: 'A', history: [{ t: 1, v: 1 }, { t: 2, v: 2 }] }, { symbol: 'B', history: [{ t: 1, v: 9 }] }];

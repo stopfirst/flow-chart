@@ -3,11 +3,17 @@
   'use strict';
   const FC = self.FC;
 
+  const DAY = 864e5, WEEK_OFF = 4 * 864e5; // 1970-01-05(월) − epoch(목)
   const TF = {
     '15m': { ms: 15 * 60e3, bn: '15m', hl: '15m', ca: '15min', cb: 900, cbAgg: 1, label: '15M' },
+    '30m': { ms: 30 * 60e3, bn: '30m', hl: '30m', ca: '30min', cb: 900, cbAgg: 2, label: '30M' },
     '1h':  { ms: 60 * 60e3, bn: '1h',  hl: '1h',  ca: '1hour', cb: 3600, cbAgg: 1, label: '1H' },
     '4h':  { ms: 240 * 60e3, bn: '4h', hl: '4h',  ca: '4hour', cb: 3600, cbAgg: 4, label: '4H' },
+    '1d':  { ms: DAY, bn: '1d', hl: '1d', ca: 'daily', cb: 86400, cbAgg: 1, label: '1D' },
+    // 주봉: Binance 기준 월요일 00:00 UTC 시작. HL·Coinbase·Coinalyze는 일봉을 받아 월요일 기준으로 합산
+    '1w':  { ms: 7 * DAY, off: WEEK_OFF, bn: '1w', hl: '1d', hlAgg: true, ca: 'daily', caMs: DAY, cb: 86400, cbAgg: 7, label: '1W' },
   };
+  const bucketOf = (T) => (t) => Math.floor((t - (T.off || 0)) / T.ms) * T.ms + (T.off || 0);
   const WARMUP = 260; // EMA200 워밍업
 
   const PANEL_META = {
@@ -125,7 +131,7 @@
       const m = mk.future.find(x => x.exchange === hlCode && x.perp && matchBase(x, sym) && x.bs);
       if (m) out.hlSym = m.symbol; }
     out.liqSyms = pickLiqSymbols(mk, sym);
-    const common = { base: caBase(settings), apiKey: settings.caKey, interval: TF[tf].ca, fromS, toS, tfMs: TF[tf].ms, cacheOnly };
+    const common = { base: caBase(settings), apiKey: settings.caKey, interval: TF[tf].ca, fromS, toS, tfMs: TF[tf].caMs || TF[tf].ms, cacheOnly };
     const oSyms = [out.cbSym, out.hlSym].filter(Boolean);
     if (oSyms.length) {
       try { out.ohlcv = await CA.history({ ...common, path: '/ohlcv-history', symbols: oSyms.join(',') }); if (!out.ohlcv) out.miss = true; }
@@ -141,12 +147,14 @@
   // → {panels, warnings, notes, done:{cbs, hl}}
   function caBuild(c, out) {
     const { times } = c, panels = [], warnings = [], notes = [], done = { cbs: false, hl: false };
+    const bk = bucketOf(TF[c.tf]); // 주봉: 일봉 → 주 버킷으로 합산 (다른 TF는 그대로)
+    const sumBy = (rows) => { const m = new Map(); for (const r of rows) { const b = bk(r.t); m.set(b, (m.get(b) || 0) + (r.d || 0)); } return [...m].map(([t, d]) => ({ t, d })); };
     const add = (id, values, extra) => { if (values && !values.every(v => v == null)) panels.push({ id, ...PANEL_META[id], values, ...(extra || {}) }); };
     const cum = (ds) => { let s = 0; return ds.map(d => (d == null ? null : (s += d))); };
     if (out.mkErr) { warnings.push('Coinalyze: ' + out.mkErr.message + (out.mkErr.cors ? ' → 브라우저 직접 호출이 막힘. 설정의 프록시 URL 사용 필요' : '')); return { panels, warnings, notes, done }; }
     const cvd = (symbol) => {
       const r = out.ohlcv.rows.find(x => x.symbol === symbol), h = (r && r.history) || [];
-      return cum(FC.alignTo(times, h.map(x => ({ t: x.t * 1000, d: (2 * x.bv - x.v) * x.c })), 'd')); // 기초자산 수량 × 종가 ≈ USD
+      return cum(FC.alignTo(times, sumBy(h.map(x => ({ t: x.t * 1000, d: (2 * x.bv - x.v) * x.c }))), 'd')); // 기초자산 수량 × 종가 ≈ USD
     };
     if (out.ohlcv) {
       if (out.cbSym) { add('cbs', cvd(out.cbSym)); done.cbs = true; }
@@ -158,7 +166,7 @@
     if (out.liq) {
       const m = new Map();
       for (const r of out.liq.rows) for (const x of r.history || []) {
-        const t = x.t * 1000, a = m.get(t) || { t, l: 0, s: 0 }; a.l += x.l || 0; a.s += x.s || 0; m.set(t, a);
+        const t = bk(x.t * 1000), a = m.get(t) || { t, l: 0, s: 0 }; a.l += x.l || 0; a.s += x.s || 0; m.set(t, a);
       }
       add('liq', times.map(t => m.get(t) || { l: 0, s: 0 }), { note: out.liqSyms.length + '개 거래소 합산' });
     } else if (out.liqErr) warnings.push('청산(Coinalyze): ' + out.liqErr.message);
@@ -176,7 +184,7 @@
   /* ---------- 모의 데이터 (?mock=1) ---------- */
   function mockAll(sym, tf, n) {
     let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    const ms = TF[tf].ms, now = Math.floor(Date.now() / ms) * ms;
+    const ms = TF[tf].ms, now = bucketOf(TF[tf])(Date.now());
     let p = sym.includes('ETH') ? 2500 : sym.includes(':') ? 7780 : 82000;
     const C = [];
     for (let i = n - 1; i >= 0; i--) {
@@ -192,7 +200,7 @@
   async function loadAll(opts) {
     const { sym, tf, bars, settings, mock } = opts;
     const T = TF[tf], isHip = sym.includes(':'), need = bars + WARMUP;
-    const now = Date.now(), startFull = Math.floor(now / T.ms) * T.ms - (need - 1) * T.ms;
+    const now = Date.now(), startFull = bucketOf(T)(now) - (need - 1) * T.ms;
     const warnings = [], status = {};
     const pair = sym + 'USDT';
 
@@ -205,7 +213,7 @@
       const tasks = {
         bnF: isHip ? null : binanceFutures(pair, T.bn, need),
         bnS: isHip ? null : binanceSpot(pair, T.bn, need),
-        hl: hlCandles(sym, T.hl, startFull, now),
+        hl: hlCandles(sym, T.hl, startFull, now).then(r => (T.hlAgg ? FC.resample(r, T.ms, T.off) : r)),
         lv: null,
       };
       const settle = async (p) => { if (!p) return { skip: true }; try { return { v: await p }; } catch (e) { return { e }; } };
@@ -239,9 +247,10 @@
     const fvg = shift(FC.findFVG(full)).filter(z => (z.end == null || z.end >= 0) && z.i0 >= -20);
     const lastClosed = full.length - 1 - (full.length && full[full.length - 1].t + T.ms > now ? 1 : 0); // 진행 중인 마지막 봉은 OB 돌파·무효화 판정에서 제외
     const obAll = FC.findOB(full, { lastClosed }), fvgAll = FC.findFVG(full);
-    const ob = shift(obAll).filter(z => z.end == null && z.i0 >= -WARMUP);
+    const LB = T.ms >= DAY ? bars : WARMUP; // 일·주봉은 화면 봉 수만큼만 과거 OB·BB+FVG 인정 (몇 년 전 구간 배제)
+    const ob = shift(obAll).filter(z => z.end == null && z.i0 >= -LB);
     // BB+FVG: 무효화되지 않은 것만 (표시 개수·거리 선택은 render.js)
-    const bbfvg = shift(FC.findBBFVG(full, { ob: obAll, fvg: fvgAll })).map(z => ({ ...z, obI: z.obI - cut, obStart: z.obStart - cut, brk: z.brk - cut, fvgI: z.fvgI - cut, touched: z.touched == null ? null : z.touched - cut })).filter(z => z.end == null && z.i0 >= -WARMUP);
+    const bbfvg = shift(FC.findBBFVG(full, { ob: obAll, fvg: fvgAll })).map(z => ({ ...z, obI: z.obI - cut, obStart: z.obStart - cut, brk: z.brk - cut, fvgI: z.fvgI - cut, touched: z.touched == null ? null : z.touched - cut })).filter(z => z.end == null && z.i0 >= -LB);
     const sessions = FC.sessionLevels(lvl15, now);
     const pd = FC.prevDayLevels(lvl15, now);
     // TDO: 15분봉은 뉴욕 자정에 항상 정렬 → 정확. 없으면 현재 타임프레임 봉(자정을 품은 봉, 'TDO≈')
@@ -299,7 +308,7 @@
       else {
         try {
           const cb = await getCb();
-          const agg = T.cbAgg > 1 ? FC.resample(cb, T.ms) : cb;
+          const agg = T.cbAgg > 1 ? FC.resample(cb, T.ms, T.off) : cb;
           const ap = agg.map(x => ({ t: x.t, d: Math.sign(x.c - x.o) * x.v * x.c }));
           addPanel('cbs', cum(FC.alignTo(times, ap, 'd')), { approx: true, title: PANEL_META.cbs.title + ' (근사)' });
         } catch (e) { warnings.push('Coinbase 현물 CVD: ' + e.message); }

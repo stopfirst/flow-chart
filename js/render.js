@@ -184,7 +184,7 @@
     // 세션: 자기 시간대 위에 연한 파선 박스 + 끝난 뒤 H/L을 오른쪽 끝까지 연장
     for (const { k, s } of sessList) {
       const c = RGB[k];
-      const ei = idxOfTime(D.times, s.end, D.tfMs);
+      const ei = D.tfMs >= 864e5 ? -1 : idxOfTime(D.times, s.end, D.tfMs); // 일·주봉에선 세션 박스 대신 수평선만
       let xb = L;
       if (ei >= 0) {
         const si = idxOfTime(D.times, s.start, D.tfMs);
@@ -241,11 +241,11 @@
     }
     // x축
     ctx.fillStyle = COL.axis; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = `${fs - 1}px ${FONT}`;
-    for (const i of xLabelIdx(n)) ctx.fillText(FC.fmtKstAxis(D.times[i]), X(i), T + ph + 7);
+    for (const i of xLabelIdx(n)) ctx.fillText(FC.fmtKstAxis(D.times[i], D.tfMs), X(i), T + ph + 7);
     // 호버 정보
     if (hover != null && hover >= 0 && hover < n) {
       const c = C[hover], r = Math.abs(c.c);
-      const s = `${FC.fmtKstAxis(c.t)}  O ${FC.fmtPrice(c.o, r)}  H ${FC.fmtPrice(c.h, r)}  L ${FC.fmtPrice(c.l, r)}  C ${FC.fmtPrice(c.c, r)}`;
+      const s = `${FC.fmtKstAxis(c.t, D.tfMs)}  O ${FC.fmtPrice(c.o, r)}  H ${FC.fmtPrice(c.h, r)}  L ${FC.fmtPrice(c.l, r)}  C ${FC.fmtPrice(c.c, r)}`;
       ctx.textAlign = 'right'; ctx.textBaseline = 'top'; ctx.fillStyle = c.c >= c.o ? COL.up : COL.down; ctx.font = `${fs - 1}px ${FONT}`;
       ctx.fillText(s, L + pw, 3);
     }
@@ -313,7 +313,7 @@
     }
     if (opt.showX !== false) {
       ctx.fillStyle = COL.axis; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.font = `${fs - 1.5}px ${FONT}`;
-      for (const i of xLabelIdx(n)) ctx.fillText(FC.fmtKstAxis(times[i]), X(i), T + ph + 4);
+      for (const i of xLabelIdx(n)) ctx.fillText(FC.fmtKstAxis(times[i], opt.tfMs), X(i), T + ph + 4);
     }
     ctx.restore();
   }
@@ -369,7 +369,7 @@
     const ph = Math.min(126, Math.floor(mainH / Math.max(1, panels.length)));
     let y = top + Math.max(0, (mainH - ph * panels.length) / 2);
     for (const P of panels) {
-      drawMini(ctx, sideX, y, sideW, ph - 6, P, D.times, null, { fs: 12 });
+      drawMini(ctx, sideX, y, sideW, ph - 6, P, D.times, null, { fs: 12, tfMs: D.tfMs });
       ctx.strokeStyle = '#ececf0'; ctx.beginPath(); ctx.moveTo(sideX, y + ph - 2.5); ctx.lineTo(sideX + sideW, y + ph - 2.5); ctx.stroke();
       y += ph;
     }
